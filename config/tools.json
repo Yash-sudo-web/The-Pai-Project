@@ -1,0 +1,96 @@
+{
+  "tools": [
+    {
+      "name": "gym.log_workout",
+      "domain": "gym",
+      "permission_level": "write",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 20, "window_seconds": 60 }
+    },
+    {
+      "name": "gym.get_progress",
+      "domain": "gym",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "nutrition.log_meal",
+      "domain": "nutrition",
+      "permission_level": "write",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 20, "window_seconds": 60 }
+    },
+    {
+      "name": "nutrition.daily_summary",
+      "domain": "nutrition",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "productivity.create_task",
+      "domain": "productivity",
+      "permission_level": "write",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 20, "window_seconds": 60 }
+    },
+    {
+      "name": "productivity.complete_task",
+      "domain": "productivity",
+      "permission_level": "write",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 20, "window_seconds": 60 }
+    },
+    {
+      "name": "productivity.daily_summary",
+      "domain": "productivity",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "system_control.get_current_datetime",
+      "domain": "system_control",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 60, "window_seconds": 60 }
+    },
+    {
+      "name": "system_control.launch_app",
+      "domain": "system_control",
+      "permission_level": "execute",
+      "requires_confirmation": true,
+      "rate_limit": { "max_calls": 5, "window_seconds": 60 }
+    },
+    {
+      "name": "system_control.close_app",
+      "domain": "system_control",
+      "permission_level": "execute",
+      "requires_confirmation": true,
+      "rate_limit": { "max_calls": 5, "window_seconds": 60 }
+    },
+    {
+      "name": "system_control.keyboard_input",
+      "domain": "system_control",
+      "permission_level": "execute",
+      "requires_confirmation": true,
+      "rate_limit": { "max_calls": 10, "window_seconds": 60 }
+    },
+    {
+      "name": "system_control.mouse_click",
+      "domain": "system_control",
+      "permission_level": "execute",
+      "requires_confirmation": true,
+      "rate_limit": { "max_calls": 10, "window_seconds": 60 }
+    },
+    {
+      "name": "system_control.screenshot",
+      "domain": "system_control",
+      "permission_level": "execute",
+      "requires_confirmation": true,
+      "rate_limit": { "max_calls": 10, "window_seconds": 60 }
+    }
+  ],
+  "disabled_domains": []
+}

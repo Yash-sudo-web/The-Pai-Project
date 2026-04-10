@@ -1,0 +1,8 @@
+{
+  "default_session": {
+    "grants": ["read", "write"]
+  },
+  "remote_session": {
+    "grants": ["read", "write", "execute"]
+  }
+}

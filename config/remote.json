@@ -1,0 +1,5 @@
+{
+  "jwt_secret": "choose_a_long_random_stringchoose_a_long_random_string",
+  "api_key": "choose_a_long_random_stringchoose_a_long_random_string",
+  "jwt_algorithm": "HS256"
+}
