@@ -5,3 +5,4 @@ __pycache__/
 .venv
 .kiro
 .pytest_cache
+personal_ai_assistant.egg-info

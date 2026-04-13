@@ -35,6 +35,10 @@ def render_dashboard_html() -> str:
       --radius-sm: 12px;
       --radius-md: 20px;
       --radius-lg: 32px;
+      
+      --danger: #ef4444;
+      --ok: #10b981;
+      --warn: #f59e0b;
     }
 
     * { box-sizing: border-box; }
@@ -75,7 +79,7 @@ def render_dashboard_html() -> str:
 
     .app-container {
       display: grid;
-      grid-template-columns: 260px 1fr 340px;
+      grid-template-columns: 260px 1fr 400px;
       gap: 24px;
       height: 100vh;
       padding: 24px;
@@ -157,31 +161,133 @@ def render_dashboard_html() -> str:
     }
 
     /* ---------------------------------
-       MAIN CHAT AREA
+       CENTER VOICE HUB
+    ----------------------------------*/
+    .center-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .header-text {
+      position: absolute;
+      top: 40px;
+      text-align: center;
+    }
+    .header-text h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 2.2rem;
+      font-weight: 600;
+      margin: 0;
+      background: linear-gradient(90deg, #fff, #a5b4fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .mic-hub {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mic-button {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--bg-panel), #1a1525);
+      border: 3px solid rgba(0, 240, 255, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 0 50px rgba(0, 240, 255, 0.15), inset 0 0 20px rgba(0,0,0,0.5);
+      transition: all 0.3s ease;
+      z-index: 10;
+    }
+    
+    .mic-button:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 70px rgba(0, 240, 255, 0.3), inset 0 0 30px rgba(0,0,0,0.5);
+    }
+    .mic-button:active {
+      transform: scale(0.95);
+    }
+    
+    .mic-button svg {
+      width: 72px;
+      height: 72px;
+      color: var(--accent-cyan);
+      transition: all 0.3s ease;
+    }
+
+    /* Rings for animation */
+    .ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 2px solid var(--accent-cyan);
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    /* Recording State */
+    .mic-hub.recording .mic-button {
+      border-color: var(--accent-purple);
+      box-shadow: 0 0 80px rgba(176, 38, 255, 0.5), inset 0 0 40px rgba(0,0,0,0.5);
+      animation: pulseMic 1.5s infinite alternate;
+    }
+    .mic-hub.recording .mic-button svg {
+      color: var(--accent-purple);
+      /* change icon to stop block or just keep it colored */
+    }
+    .mic-hub.recording .ring {
+      animation: ripple 2s linear infinite;
+    }
+    .mic-hub.recording .ring:nth-child(2) {
+      animation-delay: 1s;
+    }
+    
+    @keyframes pulseMic {
+      0% { transform: scale(1); }
+      100% { transform: scale(1.06); }
+    }
+    
+    @keyframes ripple {
+      0% { width: 180px; height: 180px; opacity: 1; border-color: var(--accent-purple); }
+      100% { width: 450px; height: 450px; opacity: 0; border-color: var(--accent-purple); border-width: 8px; }
+    }
+
+    /* Processing State (after recording stops, awaiting API) */
+    .mic-hub.processing .mic-button {
+      border-color: var(--warn);
+      box-shadow: 0 0 60px rgba(245, 158, 11, 0.4), inset 0 0 30px rgba(0,0,0,0.5);
+      animation: spinBorder 2s linear infinite;
+    }
+    .mic-hub.processing .mic-button svg {
+      color: var(--warn);
+    }
+    @keyframes spinBorder {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+
+    /* ---------------------------------
+       RIGHT CHAT AREA
     ----------------------------------*/
     .main-view {
       display: flex;
       flex-direction: column;
       height: 100%;
+      min-height: 0;
       position: relative;
-    }
-
-    .header {
-      padding: 16px 0 32px 0;
-    }
-    .header h1 {
-      font-family: 'Outfit', sans-serif;
-      font-size: 2.2rem;
-      font-weight: 600;
-      margin: 0 0 4px 0;
-    }
-    .header .timestamp {
-      color: var(--text-muted);
-      font-size: 0.95rem;
     }
 
     .chat-container {
       flex: 1;
+      min-height: 0;
       background: var(--bg-panel);
       backdrop-filter: blur(24px);
       border: 1px solid var(--line);
@@ -217,7 +323,7 @@ def render_dashboard_html() -> str:
     .message {
       display: flex;
       flex-direction: column;
-      max-width: 85%;
+      max-width: 90%;
       margin-bottom: 8px;
     }
     .message.assistant {
@@ -251,17 +357,16 @@ def render_dashboard_html() -> str:
     }
     
     .bubble {
-      padding: 16px 20px;
+      padding: 14px 18px;
       border-radius: 16px;
       background: rgba(255, 255, 255, 0.03);
-      font-size: 0.95rem;
-      line-height: 1.6;
+      font-size: 0.9rem;
+      line-height: 1.5;
       white-space: pre-wrap;
       word-break: break-word;
       animation: messageEnter 0.3s ease-out forwards;
     }
 
-    /* Glow borders via linear-gradient wrappers or border images */
     .bubble.user-bubble {
       background: linear-gradient( var(--bg-input), var(--bg-input) ) padding-box,
                   linear-gradient( 135deg, var(--accent-cyan), var(--accent-purple) ) border-box;
@@ -276,7 +381,7 @@ def render_dashboard_html() -> str:
     }
 
     .msg-time {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: var(--text-muted);
       margin-top: 6px;
       margin-left: 44px;
@@ -291,129 +396,24 @@ def render_dashboard_html() -> str:
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* Input Area */
-    .input-area {
-      padding: 24px;
-      background: transparent;
-    }
-    
-    .input-wrapper {
-      position: relative;
-      display: flex;
-      align-items: center;
-      background: linear-gradient( var(--bg-input), var(--bg-input) ) padding-box,
-                  linear-gradient( 90deg, var(--accent-cyan), var(--accent-purple) ) border-box;
-      border: 2px solid transparent;
-      border-radius: var(--radius-sm);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(176, 38, 255, 0.15);
-      transition: box-shadow 0.3s ease;
-    }
-    .input-wrapper:focus-within {
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 30px rgba(0, 240, 255, 0.3);
-    }
-
-    #command {
-      flex: 1;
-      background: transparent;
-      border: none;
-      color: var(--text-main);
-      padding: 16px 20px;
-      font-size: 1rem;
-      font-family: inherit;
-      resize: none;
-      height: 56px;
-    }
-    #command:focus { outline: none; }
-    #command::placeholder { color: var(--text-muted); }
-
-    .input-actions {
-      display: flex;
-      align-items: center;
-      padding-right: 12px;
-      gap: 8px;
-    }
-    
-    .icon-btn {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 36px;
-      height: 36px;
-      border-radius: 8px;
-      transition: all 0.2s;
-    }
-    .icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--text-main); }
-    
-    .send-btn {
-      background: var(--accent-purple);
-      color: white;
-    }
-    .send-btn:hover {
-      background: #c34dff;
-      color: white;
-      box-shadow: 0 0 15px rgba(176, 38, 255, 0.6);
-    }
-    .send-btn.sending { opacity: 0.5; pointer-events: none; }
-
-    /* ---------------------------------
-       RIGHT WIDGETS
-    ----------------------------------*/
-    .widgets {
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-      padding-top: 85px; /* align with header height */
-    }
-
-    .widget-title {
-      font-family: 'Outfit', sans-serif;
-      font-size: 1.1rem;
-      font-weight: 500;
-      color: var(--text-main);
-      margin-bottom: 4px;
-    }
-
-    .widget-card {
-      background: var(--bg-panel);
-      backdrop-filter: blur(24px);
-      border: 1px solid var(--line);
-      border-radius: var(--radius-md);
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-    }
-
-    .widget-header {
-      font-size: 0.9rem;
-      font-weight: 500;
-      color: var(--text-main);
-    }
-    .widget-value {
-      font-family: 'Outfit', sans-serif;
-      font-size: 2rem;
-      font-weight: 700;
-      color: var(--accent-cyan);
-    }
-
-    /* Pending Confirmation Widget overrides */
+    /* Pending Confirmation Widget inside chat area */
     .pending-widget {
       display: none;
       border: 1px dashed var(--warn);
       background: rgba(245, 158, 11, 0.05);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      margin: 0 20px 20px 20px;
+      flex-direction: column;
+      gap: 12px;
       animation: messageEnter 0.3s ease;
+      flex-shrink: 0;
     }
     .pending-widget.visible { display: flex; }
     
     .pending-btns {
       display: flex;
       gap: 8px;
-      margin-top: 8px;
     }
     .btn-approve, .btn-reject {
       flex: 1;
@@ -430,18 +430,84 @@ def render_dashboard_html() -> str:
     .btn-reject { background: var(--danger); color: #fff; }
     .btn-reject:hover { background: #f87171; }
 
+    /* Input Area (Fallback) */
+    .input-area {
+      padding: 0 24px 24px 24px;
+      background: transparent;
+      flex-shrink: 0;
+    }
+    
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      background: linear-gradient( var(--bg-input), var(--bg-input) ) padding-box,
+                  linear-gradient( 90deg, var(--accent-cyan), var(--accent-purple) ) border-box;
+      border: 2px solid transparent;
+      border-radius: var(--radius-sm);
+      box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+      transition: box-shadow 0.3s ease;
+    }
+    .input-wrapper:focus-within {
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 240, 255, 0.2);
+    }
+
+    #command {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-main);
+      padding: 14px 16px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      resize: none;
+      height: 48px;
+    }
+    #command:focus { outline: none; }
+    #command::placeholder { color: var(--text-muted); }
+
+    .input-actions {
+      display: flex;
+      align-items: center;
+      padding-right: 8px;
+    }
+    
+    .icon-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--text-main); }
+    
+    .send-btn {
+      background: var(--accent-purple);
+      color: white;
+    }
+    .send-btn:hover {
+      background: #c34dff;
+      color: white;
+      box-shadow: 0 0 10px rgba(176, 38, 255, 0.6);
+    }
+    .send-btn.sending { opacity: 0.5; pointer-events: none; }
+
     /* Utility */
     .d-none { display: none !important; }
 
     /* Responsive */
     @media (max-width: 1200px) {
       .app-container { grid-template-columns: 260px 1fr; }
-      .widgets { display: none; }
     }
     @media (max-width: 900px) {
       .app-container { grid-template-columns: 1fr; padding: 12px; }
       .sidebar { display: none; }
-      .header { padding: 16px 0; }
     }
   </style>
 </head>
@@ -479,17 +545,30 @@ def render_dashboard_html() -> str:
       </div>
     </aside>
 
-    <!-- MAIN CHAT AREA -->
-    <main class="main-view">
-      <div class="header">
-        <h1>Good Evening, System.</h1>
-        <div class="timestamp" id="liveTime">Date/Time • Syncing</div>
+    <!-- CENTER VOICE HUB -->
+    <main class="center-panel">
+      <div class="header-text">
+        <h1>Good Evening.</h1>
       </div>
+      <div class="mic-hub" id="mainMicHub">
+        <div class="ring"></div>
+        <div class="ring"></div>
+        <button class="mic-button" id="mainVoiceBtn" title="Hold or Click to Speak">
+          <svg id="micIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+        </button>
+      </div>
+    </main>
 
+    <!-- RIGHT CHAT AREA -->
+    <aside class="main-view">
       <div class="chat-container">
         <div class="chat-header">
-          <span>Real-time conversation</span>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+          <span>Interaction Log</span>
+          <div class="timestamp" id="liveTime" style="font-size:0.85rem; color:var(--text-muted)">Date/Time • Syncing</div>
         </div>
         
         <div class="chat-feed" id="feed">
@@ -504,51 +583,25 @@ def render_dashboard_html() -> str:
           </div>
         </div>
 
+        <div id="pendingBox" class="widget-card pending-widget">
+          <div class="widget-header" style="color:var(--text-main); font-weight:600; font-size:0.9rem;">Action Required</div>
+          <div id="pendingMeta" style="font-size:0.85rem; color:var(--text-muted); line-height:1.4"></div>
+          <div class="pending-btns">
+            <button id="approveBtn" class="btn-approve">Approve</button>
+            <button id="rejectBtn" class="btn-reject">Reject</button>
+          </div>
+        </div>
+
         <div class="input-area">
           <div class="input-wrapper">
             <input type="text" id="command" placeholder="ask pai anything... /cmds" autocomplete="off" />
             <div class="input-actions">
-              <button id="voiceBtn" class="icon-btn" title="Voice Input">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-              </button>
               <button id="sendBtn" class="icon-btn send-btn" title="Send">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
             </div>
           </div>
         </div>
-      </div>
-    </main>
-
-    <!-- RIGHT WIDGETS -->
-    <aside class="widgets">
-      <div class="widget-title">Quick Stat Widgets</div>
-      
-      <!-- Pending Box Widget (Moved here) -->
-      <div id="pendingBox" class="widget-card pending-widget">
-        <div class="widget-header" style="color:var(--text-main)">Action Required</div>
-        <div id="pendingMeta" style="font-size:0.85rem; color:var(--text-muted); line-height:1.4"></div>
-        <div class="pending-btns">
-          <button id="approveBtn" class="btn-approve">Approve</button>
-          <button id="rejectBtn" class="btn-reject">Reject</button>
-        </div>
-      </div>
-      
-      <div class="widget-card">
-        <div class="widget-header">System Load</div>
-        <div class="widget-value">22%</div>
-        <div style="width:100%; height:8px; background:rgba(255,255,255,0.1); border-radius:4px; margin-top:8px;">
-          <div style="width:22%; height:100%; background:var(--accent-purple); border-radius:4px;"></div>
-        </div>
-      </div>
-      
-      <div class="widget-card">
-        <div class="widget-header">Daily Usage</div>
-        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">Local Execution Graph</div>
-        <!-- Mock Graph Area -->
-        <svg viewBox="0 0 100 40" style="width:100%; height:60px; margin-top:12px; stroke:var(--accent-cyan); fill:rgba(0,240,255,0.1); stroke-width:2;">
-          <path d="M0 40 L0 30 Q 10 30, 20 20 T 40 25 T 60 10 T 80 20 L100 15 L100 40 Z"/>
-        </svg>
       </div>
     </aside>
 
@@ -558,7 +611,7 @@ def render_dashboard_html() -> str:
     // Live Time Setup
     function updateClock() {
       const now = new Date();
-      document.getElementById('liveTime').innerText = `Date/Time • ${now.toLocaleDateString()} | ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+      document.getElementById('liveTime').innerText = `${now.toLocaleDateString()} | ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
     }
     setInterval(updateClock, 1000);
     updateClock();
@@ -566,7 +619,12 @@ def render_dashboard_html() -> str:
     const apiKeyInput = document.getElementById("apiKey");
     const commandInput = document.getElementById("command");
     const sendBtn = document.getElementById("sendBtn");
-    const voiceBtn = document.getElementById("voiceBtn");
+    
+    // Main Voice Elements
+    const mainMicHub = document.getElementById("mainMicHub");
+    const mainVoiceBtn = document.getElementById("mainVoiceBtn");
+    const micIcon = document.getElementById("micIcon");
+
     const clearBtn = document.getElementById("clearBtn");
     const statusEl = document.getElementById("status");
     const feedEl = document.getElementById("feed");
@@ -596,6 +654,38 @@ def render_dashboard_html() -> str:
 
     function setStatus(msg) {
       statusEl.textContent = msg;
+    }
+    
+    // Text-to-Speech via Server (Groq)
+    let currentAudio = null;
+
+    async function speakText(text) {
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+      }
+      try {
+        const response = await fetch("/voice/tts", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ text })
+        });
+        if (!response.ok) throw new Error("TTS request failed.");
+        
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        currentAudio = new Audio(url);
+        
+        currentAudio.onplay = () => mainMicHub.classList.add("recording"); // Reuse pulsing animation
+        currentAudio.onended = () => {
+          mainMicHub.classList.remove("recording");
+          URL.revokeObjectURL(url);
+        };
+        
+        await currentAudio.play();
+      } catch (err) {
+        console.error("TTS Error:", err);
+      }
     }
 
     function addBubble(role, text) {
@@ -639,6 +729,8 @@ def render_dashboard_html() -> str:
       activePendingId = pendingId;
       pendingMeta.textContent = `Grant execution logic for Token: ${pendingId}`;
       pendingBox.classList.add("visible");
+      // Scroll to pending box
+      feedEl.scrollTop = feedEl.scrollHeight;
     }
 
     function hidePending() {
@@ -657,8 +749,10 @@ def render_dashboard_html() -> str:
 
         if (data.status === "completed") {
           hidePending();
-          addBubble("assistant", formatResult(data.result));
+          const textResponse = formatResult(data.result);
+          addBubble("assistant", textResponse);
           setStatus("Pending command resolved.");
+          speakText(textResponse);
           return;
         }
         pollTimer = setTimeout(() => pollStatus(pendingId), 900);
@@ -667,8 +761,8 @@ def render_dashboard_html() -> str:
       }
     }
 
-    async function sendCommand() {
-      const command = commandInput.value.trim();
+    async function sendCommand(overrideCommand = null) {
+      const command = overrideCommand || commandInput.value.trim();
       if (!command) return;
 
       sendBtn.classList.add("sending");
@@ -690,11 +784,15 @@ def render_dashboard_html() -> str:
           showPending(data.pending_id);
           setStatus("Awaiting confirmation");
           pollStatus(data.pending_id);
+          // Wait to speak if we need confirmation. Could also say "Please confirm this action..."
+          speakText("Please confirm execution grant.");
           return;
         }
 
-        addBubble("assistant", formatResult(data.result));
+        const textResponse = formatResult(data.result);
+        addBubble("assistant", textResponse);
         setStatus("Command completed.");
+        speakText(textResponse);
       } catch (error) {
         addBubble("assistant", error.message);
         setStatus("Error: " + error.message);
@@ -720,19 +818,34 @@ def render_dashboard_html() -> str:
     }
 
     async function uploadRecording(blob) {
+      mainMicHub.classList.add("processing");
+      setStatus("Transcribing audio...");
+
       const formData = new FormData();
       formData.append("audio", blob, "command.webm");
 
-      const response = await fetch("/voice/transcribe", {
-        method: "POST",
-        headers: { "Authorization": authHeaders()["Authorization"] },
-        body: formData
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error("Transcription failed.");
-      
-      commandInput.value = data.text || "";
-      commandInput.focus();
+      try {
+        const response = await fetch("/voice/transcribe", {
+          method: "POST",
+          headers: { "Authorization": authHeaders()["Authorization"] },
+          body: formData
+        });
+        const data = await response.json();
+        
+        mainMicHub.classList.remove("processing");
+        
+        if (!response.ok) throw new Error("Transcription failed.");
+        
+        if (data.text) {
+          // Immediately send the transcribed command
+          sendCommand(data.text);
+        } else {
+          setStatus("No speech detected.");
+        }
+      } catch (err) {
+        mainMicHub.classList.remove("processing");
+        setStatus(err.message);
+      }
     }
 
     async function startVoiceInput() {
@@ -748,11 +861,19 @@ def render_dashboard_html() -> str:
       mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
       mediaRecorder.onstart = () => {
         isListening = true;
-        voiceBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2"><rect x="6" y="6" width="12" height="12"></rect></svg>`;
+        mainMicHub.classList.add("recording");
+        micIcon.innerHTML = `<rect x="6" y="6" width="12" height="12"></rect>`; // square stop icon
+        // Cancel any audio playback when starting new voice input
+        if (currentAudio) {
+            currentAudio.pause();
+            currentAudio = null;
+        }
       };
       mediaRecorder.onstop = async () => {
         isListening = false;
-        voiceBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>`;
+        mainMicHub.classList.remove("recording");
+        micIcon.innerHTML = `<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>`;
+        
         mediaStream.getTracks().forEach(t => t.stop());
         mediaStream = null;
 
@@ -765,12 +886,12 @@ def render_dashboard_html() -> str:
       mediaRecorder.start();
     }
 
-    voiceBtn.addEventListener("click", () => {
+    mainVoiceBtn.addEventListener("click", () => {
       if (isListening) mediaRecorder.stop();
       else startVoiceInput();
     });
 
-    sendBtn.addEventListener("click", sendCommand);
+    sendBtn.addEventListener("click", () => sendCommand());
     clearBtn.addEventListener("click", () => {
       feedEl.innerHTML = "";
       hidePending();
@@ -779,8 +900,13 @@ def render_dashboard_html() -> str:
     rejectBtn.addEventListener("click", () => resolvePending("reject"));
     
     commandInput.addEventListener("keydown", (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") sendCommand();
+      if ((event.ctrlKey || event.metaKey || !event.shiftKey) && event.key === "Enter") {
+        event.preventDefault(); // prevent input weirdness
+        sendCommand();
+      }
     });
+
+
     
   </script>
 </body>

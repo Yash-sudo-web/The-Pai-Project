@@ -32,14 +32,6 @@ def _resolve_database_url() -> str:
     if explicit:
         return explicit
 
-    password = os.environ.get("SUPABASE_DB_PASSWORD")
-    if password:
-        return (
-            "postgresql+psycopg://postgres:"
-            f"{password}"
-            "@db.ffbejavahkqzwngabpqp.supabase.co:5432/postgres?sslmode=require"
-        )
-
     return "sqlite:///./assistant.db"
 
 
