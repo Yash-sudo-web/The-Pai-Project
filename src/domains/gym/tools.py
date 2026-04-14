@@ -31,6 +31,8 @@ _LOG_WORKOUT_INPUT_SCHEMA: dict[str, Any] = {
         "duration_s": {"type": ["integer", "null"]},
         "distance_m": {"type": ["number", "null"]},
         "notes": {"type": ["string", "null"]},
+        "worked_out_at": {"type": ["string", "null"], "format": "date-time",
+                          "description": "When the workout was actually performed (ISO datetime). Defaults to now if omitted."},
     },
     "required": ["exercise"],
     "additionalProperties": False,
@@ -41,6 +43,7 @@ _LOG_WORKOUT_OUTPUT_SCHEMA: dict[str, Any] = {
     "properties": {
         "id": {"type": "string"},
         "exercise": {"type": "string"},
+        "worked_out_at": {"type": "string"},
         "logged_at": {"type": "string"},
     },
     "required": ["id", "exercise", "logged_at"],
@@ -66,6 +69,13 @@ class LogWorkoutTool(ToolDefinition):
         workout_id = str(uuid.uuid4())
         now = datetime.now(tz=timezone.utc)
 
+        # Parse worked_out_at if provided, otherwise default to now
+        worked_out_at_raw = inputs.get("worked_out_at")
+        if worked_out_at_raw:
+            worked_out_at = datetime.fromisoformat(worked_out_at_raw)
+        else:
+            worked_out_at = now
+
         workout = Workout(
             id=workout_id,
             user_id="default_user",
@@ -76,6 +86,7 @@ class LogWorkoutTool(ToolDefinition):
             duration_s=inputs.get("duration_s"),
             distance_m=inputs.get("distance_m"),
             notes=inputs.get("notes"),
+            worked_out_at=worked_out_at,
             logged_at=now,
         )
 
@@ -92,6 +103,7 @@ class LogWorkoutTool(ToolDefinition):
         return {
             "id": workout_id,
             "exercise": inputs["exercise"],
+            "worked_out_at": worked_out_at.isoformat(),
             "logged_at": now.isoformat(),
         }
 

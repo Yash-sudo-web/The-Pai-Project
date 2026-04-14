@@ -501,6 +501,289 @@ def render_dashboard_html() -> str:
     /* Utility */
     .d-none { display: none !important; }
 
+    /* ---------------------------------
+       SESSIONS DRAWER OVERLAY
+    ----------------------------------*/
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    .drawer-overlay.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .sessions-drawer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: min(480px, 90vw);
+      height: 100vh;
+      z-index: 101;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--line);
+      backdrop-filter: blur(30px);
+      transform: translateX(-100%);
+      transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      box-shadow: 10px 0 50px rgba(0, 0, 0, 0.6);
+    }
+    .sessions-drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px;
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    .drawer-header h2 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.3rem;
+      font-weight: 600;
+      margin: 0;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .drawer-close {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--line);
+      color: var(--text-muted);
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    .drawer-close:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
+    }
+
+    .drawer-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    .drawer-content::-webkit-scrollbar { width: 6px; }
+    .drawer-content::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+
+    .session-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 18px;
+      margin-bottom: 12px;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .session-card::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--accent-cyan), var(--accent-purple));
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+    .session-card:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.15);
+      transform: translateX(4px);
+    }
+    .session-card:hover::before {
+      opacity: 1;
+    }
+    .session-card.active-session {
+      border-color: var(--accent-cyan);
+      background: rgba(0, 240, 255, 0.04);
+    }
+    .session-card.active-session::before {
+      opacity: 1;
+    }
+
+    .session-date {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 600;
+      font-size: 1rem;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .session-date .session-badge {
+      font-size: 0.65rem;
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .badge-active {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--ok);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .badge-closed {
+      background: rgba(148, 163, 184, 0.1);
+      color: var(--text-muted);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .session-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .session-meta svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+    }
+
+    .session-summary {
+      font-size: 0.85rem;
+      line-height: 1.6;
+      color: rgba(248, 250, 252, 0.7);
+      background: rgba(0, 0, 0, 0.2);
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .no-summary {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .drawer-empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+    .drawer-empty svg {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 16px;
+      opacity: 0.3;
+    }
+    .drawer-empty p {
+      font-size: 0.9rem;
+    }
+
+    .session-messages-view {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+    }
+    .session-messages-view.visible {
+      display: flex;
+    }
+    .sessions-list-view.hidden {
+      display: none;
+    }
+
+    .back-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: none;
+      border: none;
+      color: var(--accent-cyan);
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .back-btn:hover {
+      background: rgba(0, 240, 255, 0.05);
+    }
+
+    .session-msg-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .session-msg-list::-webkit-scrollbar { width: 6px; }
+    .session-msg-list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+
+    .history-msg {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .history-msg.history-user {
+      flex-direction: row-reverse;
+    }
+
+    .history-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .history-avatar.ai {
+      background: rgba(176, 38, 255, 0.15);
+      color: var(--accent-purple);
+    }
+
+    .history-bubble {
+      padding: 10px 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      font-size: 0.85rem;
+      line-height: 1.5;
+      max-width: 85%;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .history-user .history-bubble {
+      background: rgba(0, 240, 255, 0.06);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+    }
+    .history-time {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+      padding: 0 38px;
+    }
+    .history-user .history-time {
+      text-align: right;
+    }
+
     /* Responsive */
     @media (max-width: 1200px) {
       .app-container { grid-template-columns: 260px 1fr; }
@@ -532,9 +815,13 @@ def render_dashboard_html() -> str:
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
           Dashboard
         </div>
+        <div class="nav-item" id="historyBtn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Chat History
+        </div>
         <div class="nav-item" id="clearBtn">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-          Clear Memory
+          Clear Chat
         </div>
       </div>
       
@@ -605,6 +892,31 @@ def render_dashboard_html() -> str:
       </div>
     </aside>
 
+  </div>
+
+  <!-- SESSIONS DRAWER -->
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+  <div class="sessions-drawer" id="sessionsDrawer">
+    <div class="drawer-header">
+      <h2>Chat History</h2>
+      <button class="drawer-close" id="drawerCloseBtn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <!-- Sessions List -->
+    <div class="drawer-content sessions-list-view" id="sessionsListView">
+      <div id="sessionsListContent"></div>
+    </div>
+
+    <!-- Session Messages Detail -->
+    <div class="session-messages-view" id="sessionMessagesView">
+      <button class="back-btn" id="backToListBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        Back to sessions
+      </button>
+      <div class="session-msg-list" id="sessionMsgList"></div>
+    </div>
   </div>
 
   <script>
@@ -901,10 +1213,206 @@ def render_dashboard_html() -> str:
     
     commandInput.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey || !event.shiftKey) && event.key === "Enter") {
-        event.preventDefault(); // prevent input weirdness
+        event.preventDefault();
         sendCommand();
       }
     });
+
+    // -----------------------------------------------------------------
+    // CHAT HISTORY / SESSIONS DRAWER
+    // -----------------------------------------------------------------
+    const historyBtn = document.getElementById("historyBtn");
+    const drawerOverlay = document.getElementById("drawerOverlay");
+    const sessionsDrawer = document.getElementById("sessionsDrawer");
+    const drawerCloseBtn = document.getElementById("drawerCloseBtn");
+    const sessionsListView = document.getElementById("sessionsListView");
+    const sessionsListContent = document.getElementById("sessionsListContent");
+    const sessionMessagesView = document.getElementById("sessionMessagesView");
+    const sessionMsgList = document.getElementById("sessionMsgList");
+    const backToListBtn = document.getElementById("backToListBtn");
+
+    function openDrawer() {
+      drawerOverlay.classList.add("open");
+      sessionsDrawer.classList.add("open");
+      loadSessions();
+    }
+
+    function closeDrawer() {
+      drawerOverlay.classList.remove("open");
+      sessionsDrawer.classList.remove("open");
+      // Reset to list view
+      setTimeout(() => {
+        sessionsListView.classList.remove("hidden");
+        sessionMessagesView.classList.remove("visible");
+      }, 350);
+    }
+
+    historyBtn.addEventListener("click", openDrawer);
+    drawerOverlay.addEventListener("click", closeDrawer);
+    drawerCloseBtn.addEventListener("click", closeDrawer);
+    backToListBtn.addEventListener("click", () => {
+      sessionsListView.classList.remove("hidden");
+      sessionMessagesView.classList.remove("visible");
+    });
+
+    function formatDate(dateStr) {
+      const d = new Date(dateStr + "T00:00:00");
+      const today = new Date();
+      const todayStr = today.toISOString().slice(0, 10);
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+      if (dateStr === todayStr) return "Today";
+      if (dateStr === yesterdayStr) return "Yesterday";
+      return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+    }
+
+    async function loadSessions() {
+      sessionsListContent.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted)">Loading sessions...</div>';
+      try {
+        const resp = await fetch("/chat/sessions?limit=30");
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "Failed to load sessions");
+
+        if (!data.sessions || data.sessions.length === 0) {
+          sessionsListContent.innerHTML = `
+            <div class="drawer-empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              <p>No chat sessions yet.<br>Start a conversation to see history here.</p>
+            </div>`;
+          return;
+        }
+
+        sessionsListContent.innerHTML = data.sessions.map(s => {
+          const isActive = s.status === 'active';
+          const badge = isActive
+            ? '<span class="session-badge badge-active">Active</span>'
+            : '<span class="session-badge badge-closed">Closed</span>';
+          const summary = s.summary
+            ? `<div class="session-summary">${escapeHtml(s.summary)}</div>`
+            : (isActive ? '<div class="no-summary">Session in progress...</div>' : '<div class="no-summary">No summary available</div>');
+
+          return `
+            <div class="session-card ${isActive ? 'active-session' : ''}" data-session-id="${s.id}">
+              <div class="session-date">
+                ${formatDate(s.session_date)}
+                ${badge}
+              </div>
+              <div class="session-meta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                ${s.message_count} messages
+              </div>
+              ${summary}
+            </div>`;
+        }).join('');
+
+        // Attach click handlers for viewing session messages
+        sessionsListContent.querySelectorAll('.session-card').forEach(card => {
+          card.addEventListener('click', () => {
+            const sessionId = card.dataset.sessionId;
+            viewSessionMessages(sessionId);
+          });
+        });
+      } catch (err) {
+        sessionsListContent.innerHTML = `<div style="text-align:center; padding:40px; color:var(--danger)">${err.message}</div>`;
+      }
+    }
+
+    async function viewSessionMessages(sessionId) {
+      sessionsListView.classList.add("hidden");
+      sessionMessagesView.classList.add("visible");
+      sessionMsgList.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted)">Loading messages...</div>';
+
+      try {
+        const resp = await fetch(`/chat/history?limit=200`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "Failed to load messages");
+
+        if (!data.messages || data.messages.length === 0) {
+          sessionMsgList.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted)">No messages in this session.</div>';
+          return;
+        }
+
+        sessionMsgList.innerHTML = data.messages.map(m => {
+          const isUser = m.role === 'user';
+          const timeStr = m.created_at ? new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+          const avatarClass = isUser ? '' : 'ai';
+          const avatarSvg = isUser
+            ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+            : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>';
+
+          return `
+            <div>
+              <div class="history-msg ${isUser ? 'history-user' : ''}">
+                <div class="history-avatar ${avatarClass}">${avatarSvg}</div>
+                <div class="history-bubble">${escapeHtml(m.content)}</div>
+              </div>
+              <div class="history-time" style="${isUser ? 'text-align:right' : ''}">${timeStr}</div>
+            </div>`;
+        }).join('');
+
+        sessionMsgList.scrollTop = sessionMsgList.scrollHeight;
+      } catch (err) {
+        sessionMsgList.innerHTML = `<div style="text-align:center; padding:40px; color:var(--danger)">${err.message}</div>`;
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // -----------------------------------------------------------------
+    // LOAD TODAY'S PERSISTED CHAT ON PAGE LOAD
+    // -----------------------------------------------------------------
+    async function loadTodayChat() {
+      try {
+        const resp = await fetch("/chat/history?limit=100");
+        const data = await resp.json();
+        if (!resp.ok || !data.messages || data.messages.length === 0) return;
+
+        // Clear the default welcome message
+        feedEl.innerHTML = '';
+
+        data.messages.forEach(m => {
+          if (m.role === 'user' || m.role === 'assistant') {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${m.role}`;
+
+            const timeStr = m.created_at
+              ? new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+              : '';
+
+            let avatarHtml;
+            if (m.role === 'assistant') {
+              avatarHtml = '<div class="avatar ai"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>';
+            } else {
+              avatarHtml = '<div class="avatar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>';
+            }
+
+            msgDiv.innerHTML = `
+              <div class="bubble-wrapper">
+                ${avatarHtml}
+                <div class="bubble ${m.role === 'user' ? 'user-bubble' : ''}">${escapeHtml(m.content)}</div>
+              </div>
+              <div class="msg-time">${timeStr}</div>`;
+
+            feedEl.appendChild(msgDiv);
+          }
+        });
+
+        feedEl.scrollTop = feedEl.scrollHeight;
+      } catch (err) {
+        console.error('Failed to load today chat:', err);
+      }
+    }
+
+    // Load today's chat when page loads
+    loadTodayChat();
 
 
     

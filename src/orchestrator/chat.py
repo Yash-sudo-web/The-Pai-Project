@@ -1,8 +1,14 @@
-"""Direct conversational response path for non-tool requests."""
+"""Direct conversational response path for non-tool requests.
+
+Now integrated with ChatSessionManager for message persistence,
+cross-day context injection via session summaries, and full
+intra-day conversation history.
+"""
 
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from src.orchestrator.llm import LLMClient, LLMError
 from src.tracing import traceable_if_available
@@ -16,32 +22,102 @@ Rules:
 - Do not invent tool executions or claim an action was performed when it was not.
 - If the user is chatting, greeting you, asking for help, or asking a general question, answer directly.
 - If the user appears to want the system to perform an action, briefly explain that you can help and ask them to phrase it as a command if needed.
+- If past conversation summaries are provided, use them as context to personalise your responses. Reference previous topics naturally when relevant.
+"""
+
+_SUMMARY_PROMPT = """\
+You are a summarisation assistant. Given the following conversation from a single day, \
+produce a concise summary (150-300 words) that captures:
+1. Key topics discussed
+2. Important decisions or preferences expressed by the user
+3. Any tasks, goals, or follow-ups mentioned
+4. The overall tone/mood of the conversation
+
+Return ONLY the summary text, no headers or formatting.
 """
 
 
+async def _default_summariser(messages: list[dict]) -> str:
+    """Default LLM-based summariser for daily sessions."""
+    import openai
+
+    from src.tracing import wrap_openai_client
+
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    base_url = None
+    model = os.environ.get("CHAT_MODEL", "gpt-5-mini")
+
+    using_openrouter = bool(
+        os.environ.get("OPENROUTER_API_KEY")
+        or os.environ.get("OPENROUTER_BASE_URL")
+        or (api_key and api_key.startswith("sk-or-v1-"))
+    )
+    if using_openrouter:
+        base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+        model = os.environ.get("OPENROUTER_MODEL", model)
+
+    client = wrap_openai_client(openai.AsyncOpenAI(api_key=api_key, base_url=base_url))
+
+    # Build the conversation transcript for summarisation
+    transcript = "\n".join(f"[{m['role']}]: {m['content']}" for m in messages)
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SUMMARY_PROMPT},
+            {"role": "user", "content": transcript},
+        ],
+        timeout=30.0,
+    )
+    content = response.choices[0].message.content
+    if not content:
+        raise LLMError("Summariser returned an empty response.")
+    return content.strip()
+
+
 class ChatClient:
-    """Handles normal conversational replies without invoking tool planning."""
+    """Handles normal conversational replies without invoking tool planning.
+
+    When a ``ChatSessionManager`` is provided, every message is persisted
+    and past session summaries + today's history are injected into the
+    LLM context window automatically.
+    """
 
     def __init__(
         self,
         llm_client: LLMClient | None = None,
         model: str | None = None,
+        session_manager=None,
     ) -> None:
         self._llm = llm_client or LLMClient(model=model or os.environ.get("CHAT_MODEL", "gpt-5-mini"))
+        self._session_manager = session_manager
 
     @traceable_if_available("chat.complete")
-    async def complete(self, message: str) -> str:
+    async def complete(self, message: str, user_id: str = "default_user") -> str:
         greeting = self._local_fast_path(message)
         if greeting is not None:
+            # Still persist greetings if session manager is available
+            if self._session_manager is not None:
+                session = await self._session_manager.get_or_create_session(user_id)
+                self._session_manager.add_message(session.id, "user", message)
+                self._session_manager.add_message(session.id, "assistant", greeting)
             return greeting
+
+        # Build LLM messages list
+        llm_messages: list[dict] = [{"role": "system", "content": _CHAT_SYSTEM_PROMPT}]
+
+        if self._session_manager is not None:
+            # Inject cross-day summaries and today's conversation history
+            context = await self._session_manager.build_context_messages(user_id)
+            llm_messages.extend(context)
+
+        # Add the current user message
+        llm_messages.append({"role": "user", "content": message})
 
         try:
             response = await self._llm._client.chat.completions.create(
                 model=os.environ.get("CHAT_MODEL", self._llm._model),
-                messages=[
-                    {"role": "system", "content": _CHAT_SYSTEM_PROMPT},
-                    {"role": "user", "content": message},
-                ],
+                messages=llm_messages,
                 timeout=20.0,
             )
         except Exception as exc:
@@ -50,7 +126,15 @@ class ChatClient:
         content = response.choices[0].message.content
         if content is None:
             raise LLMError("Chat model returned an empty response.")
-        return content.strip()
+        reply = content.strip()
+
+        # Persist both messages
+        if self._session_manager is not None:
+            session = await self._session_manager.get_or_create_session(user_id)
+            self._session_manager.add_message(session.id, "user", message)
+            self._session_manager.add_message(session.id, "assistant", reply)
+
+        return reply
 
     @staticmethod
     def _local_fast_path(message: str) -> str | None:

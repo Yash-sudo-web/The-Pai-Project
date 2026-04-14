@@ -14,13 +14,16 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
+    ForeignKey,
     Integer,
     LargeBinary,
     REAL,
     Text,
+    UniqueConstraint,
     create_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 from sqlalchemy.types import DateTime
 
 from src.config import load_env_file
@@ -64,6 +67,7 @@ class Workout(Base):
     duration_s = Column(Integer, nullable=True)
     distance_m = Column(REAL, nullable=True)
     notes = Column(Text, nullable=True)
+    worked_out_at = Column(DateTime(timezone=True), nullable=True)  # when the workout actually happened
     logged_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
@@ -135,6 +139,46 @@ class Note(Base):
     content = Column(Text, nullable=False)
     embedding = Column(LargeBinary, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class ChatSession(Base):
+    """Daily chat session — exactly one per user per calendar day."""
+
+    __tablename__ = "chat_sessions"
+
+    id = Column(Text, primary_key=True)
+    user_id = Column(Text, nullable=False)
+    session_date = Column(Date, nullable=False)
+    status = Column(Text, nullable=False, default="active")
+    summary = Column(Text, nullable=True)
+    message_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+
+    messages = relationship("ChatMessage", back_populates="session", order_by="ChatMessage.created_at")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "session_date", name="uq_chat_session_user_date"),
+        CheckConstraint("status IN ('active', 'closed')", name="ck_chat_session_status"),
+    )
+
+
+class ChatMessage(Base):
+    """Individual chat message belonging to a daily session."""
+
+    __tablename__ = "chat_messages"
+
+    id = Column(Text, primary_key=True)
+    session_id = Column(Text, ForeignKey("chat_sessions.id"), nullable=False)
+    role = Column(Text, nullable=False)  # 'user' or 'assistant'
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    session = relationship("ChatSession", back_populates="messages")
+
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant', 'system')", name="ck_chat_message_role"),
+    )
 
 
 def init_db() -> None:

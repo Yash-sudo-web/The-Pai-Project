@@ -19,6 +19,7 @@ from src.remote.dashboard import render_dashboard_html
 from src.safety.confirmation import ConfirmationLayer
 from src.types import PermissionLevel
 from src.voice.transcription import TranscriptionEngine, TranscriptionError
+from src.memory.chat_sessions import ChatSessionManager
 import os
 
 
@@ -60,6 +61,7 @@ def create_app(
     auth_manager: AuthManager,
     permissions_config: PermissionsConfig,
     transcription_engine: TranscriptionEngine | None = None,
+    session_manager: ChatSessionManager | None = None,
 ) -> FastAPI:
     """Create the FastAPI app with REST and WebSocket endpoints."""
     @asynccontextmanager
@@ -253,5 +255,36 @@ def create_app(
                 await websocket.send_json(response)
         except WebSocketDisconnect:
             return
+
+    # ------------------------------------------------------------------
+    # Chat history & sessions endpoints
+    # ------------------------------------------------------------------
+
+    @app.get("/chat/history")
+    async def get_chat_history(
+        limit: int = 50,
+    ) -> dict:
+        """Return messages for today's active session."""
+        if session_manager is None:
+            raise HTTPException(status_code=503, detail="Chat sessions not configured")
+
+        session = await session_manager.get_or_create_session("default_user")
+        messages = session_manager.get_messages(session.id, limit=limit)
+        return {
+            "session_id": session.id,
+            "session_date": str(session.session_date),
+            "messages": messages,
+        }
+
+    @app.get("/chat/sessions")
+    async def get_chat_sessions(
+        limit: int = 30,
+    ) -> dict:
+        """Return a list of past sessions with summaries."""
+        if session_manager is None:
+            raise HTTPException(status_code=503, detail="Chat sessions not configured")
+
+        sessions = session_manager.get_sessions_list("default_user", limit=limit)
+        return {"sessions": sessions}
 
     return app

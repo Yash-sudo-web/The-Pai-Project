@@ -11,11 +11,12 @@ from src.domains.gym.tools import register_gym_tools
 from src.domains.nutrition.tools import register_nutrition_tools
 from src.domains.productivity.tools import register_productivity_tools
 from src.domains.system_control.tools import register_system_control_tools
+from src.memory.chat_sessions import ChatSessionManager
 from src.memory.db import SessionLocal, init_db
 from src.memory.retrieval import RetrievalLayer
 from src.memory.vector_store import VectorStore, VectorStoreUnavailableError
 from src.orchestrator.intent_parser import IntentParser
-from src.orchestrator.chat import ChatClient
+from src.orchestrator.chat import ChatClient, _default_summariser
 from src.orchestrator.llm import LLMClient
 from src.orchestrator.orchestrator import Orchestrator
 from src.orchestrator.router import MessageRouter
@@ -37,6 +38,7 @@ class ApplicationRuntime:
     rate_limiter: RateLimiter
     tool_registry: ToolRegistry
     retrieval_layer: RetrievalLayer
+    chat_session_manager: ChatSessionManager
     intent_parser: IntentParser
     orchestrator: Orchestrator
     auth_manager: AuthManager
@@ -85,7 +87,11 @@ def create_runtime(config: AppConfig = app_config, enable_voice: bool = False) -
         vector_db_enabled=vector_store is not None,
     )
     llm_client = LLMClient()
-    chat_client = ChatClient()
+    chat_session_manager = ChatSessionManager(
+        session_factory=SessionLocal,
+        llm_summariser=_default_summariser,
+    )
+    chat_client = ChatClient(session_manager=chat_session_manager)
     router = MessageRouter(llm_client=llm_client)
     intent_parser = IntentParser(llm_client=llm_client, audit_log=audit_log)
     orchestrator = Orchestrator(
@@ -110,6 +116,7 @@ def create_runtime(config: AppConfig = app_config, enable_voice: bool = False) -
         auth_manager,
         permissions_config,
         transcription_engine=transcription_engine,
+        session_manager=chat_session_manager,
     )
 
     voice_module = None
@@ -128,6 +135,7 @@ def create_runtime(config: AppConfig = app_config, enable_voice: bool = False) -
         rate_limiter=rate_limiter,
         tool_registry=tool_registry,
         retrieval_layer=retrieval_layer,
+        chat_session_manager=chat_session_manager,
         intent_parser=intent_parser,
         orchestrator=orchestrator,
         auth_manager=auth_manager,
