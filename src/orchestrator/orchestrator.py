@@ -6,6 +6,7 @@ input/output validation, tool execution, and audit logging for every command.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -28,6 +29,8 @@ from src.tools.validation import (
     validate_output,
 )
 from src.types import AuditEntry, DomainName, PermissionLevel, ToolInvocation
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -476,4 +479,4 @@ class Orchestrator:
             )
             self._audit_log.record(entry)
         except Exception:
-            pass  # audit failures must not interrupt the main flow
+            logger.exception("Failed to record audit entry for tool '%s'", tool_name)

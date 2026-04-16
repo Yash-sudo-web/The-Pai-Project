@@ -48,17 +48,16 @@ class MessageRouter:
             return RouteDecision(kind="clarify", reason="empty_message")
 
         try:
-            response = await self._llm._client.chat.completions.create(
-                model=os.environ.get("ROUTER_MODEL", self._llm._model),
+            content = await self._llm.raw_chat(
                 messages=[
                     {"role": "system", "content": self._system_prompt},
                     {"role": "user", "content": text},
                 ],
                 temperature=0.0,
                 timeout=15.0,
+                model_override=os.environ.get("ROUTER_MODEL"),
             )
             
-            content = response.choices[0].message.content
             if content:
                 # Basic cleanup if the LLM hallucinated markdown code blocks
                 if content.startswith("```json"):

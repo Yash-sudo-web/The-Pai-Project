@@ -23,6 +23,12 @@ Rules:
 - If the user is chatting, greeting you, asking for help, or asking a general question, answer directly.
 - If the user appears to want the system to perform an action, briefly explain that you can help and ask them to phrase it as a command if needed.
 - If past conversation summaries are provided, use them as context to personalise your responses. Reference previous topics naturally when relevant.
+
+## Gym / Workout Responses:
+- When summarising workout history, present it in a clean, readable format: group by date, list exercises with sets × reps @ weight.
+- When a PR (personal record) alert is included in tool results, celebrate it enthusiastically! Use encouraging language.
+- When presenting progression suggestions, frame them as friendly coaching advice, not raw data. Mention the reasoning (e.g., "Since you hit 3×10 at 60kg last time, let's push to 62.5kg").
+- If the user asks what to do today, combine the history and suggestions into a clear session plan.
 """
 
 _SUMMARY_PROMPT = """\
@@ -34,6 +40,23 @@ produce a concise summary (150-300 words) that captures:
 4. The overall tone/mood of the conversation
 
 Return ONLY the summary text, no headers or formatting.
+"""
+
+_TOOL_RESULT_SUMMARY_PROMPT = """\
+You are summarising the results of tool executions for the user. Given the tool name, inputs, and outputs, write a natural, conversational response.
+
+Rules:
+- Do NOT include database IDs, technical status fields, or raw JSON.
+- For workout history: present exercises with sets × reps @ weight, grouped by date.
+- For PR checks: highlight the key records (max weight, estimated 1RM, total sessions).
+- For progression suggestions: present as friendly coaching advice with reasoning.
+- For PR alerts in log_workout: celebrate the achievement enthusiastically! 🎉
+- For workout logging without PR: confirm what was logged in a friendly, concise way.
+- For nutrition goal setting: confirm the targets set and encourage the user.
+- For goal checking: present progress as a clear dashboard — consumed vs target, remaining, and percentage. Use visual cues (e.g. "72% of calories done ✅").
+- For meal suggestions: present options conversationally with reasoning. If over budget, be empathetic but firm. If suggesting food, make it sound appetising.
+- For nutrition reports: summarise daily averages, highlight best/worst days, and mention goal adherence percentage. Keep it motivating.
+- Keep responses conversational and motivating.
 """
 
 
@@ -115,18 +138,13 @@ class ChatClient:
         llm_messages.append({"role": "user", "content": message})
 
         try:
-            response = await self._llm._client.chat.completions.create(
-                model=os.environ.get("CHAT_MODEL", self._llm._model),
+            reply = await self._llm.raw_chat(
                 messages=llm_messages,
                 timeout=20.0,
+                model_override=os.environ.get("CHAT_MODEL"),
             )
         except Exception as exc:
             raise LLMError(str(exc)) from exc
-
-        content = response.choices[0].message.content
-        if content is None:
-            raise LLMError("Chat model returned an empty response.")
-        reply = content.strip()
 
         # Persist both messages
         if self._session_manager is not None:
@@ -150,32 +168,35 @@ class ChatClient:
         """Use the LLM to generate a natural conversational summary of tool execution results."""
         import json
         
-        system_prompt = (
-            "You are a helpful personal AI assistant. "
-            "You just successfully executed a series of tools on the user's behalf based on their command. "
-            "Given their original command and the raw JSON output from the tools, provide a brief, friendly, "
-            "natural language response summarizing what was done. "
-            "Do NOT include the raw JSON headers or format. "
-            "Keep it concise and user-centric."
-        )
+        system_prompt = _TOOL_RESULT_SUMMARY_PROMPT
+        
+        # Strip internal/technical fields before sending to the LLM
+        _INTERNAL_KEYS = {"id", "logged_at", "created_at", "updated_at", "user_id"}
+        
+        def _sanitize(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                return {k: _sanitize(v) for k, v in obj.items() if k not in _INTERNAL_KEYS}
+            if isinstance(obj, list):
+                return [_sanitize(item) for item in obj]
+            return obj
+        
+        sanitized_results = _sanitize(results)
         
         user_content = (
             f"Original command: {original_command}\n"
-            f"Tool Execution Results:\n{json.dumps(results, indent=2, default=str)}"
+            f"Tool Execution Results:\n{json.dumps(sanitized_results, indent=2, default=str)}"
         )
         
         try:
-            response = await self._llm._client.chat.completions.create(
-                model=os.environ.get("CHAT_MODEL", self._llm._model),
+            reply = await self._llm.raw_chat(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
                 timeout=20.0,
+                model_override=os.environ.get("CHAT_MODEL"),
             )
-            content = response.choices[0].message.content
-            if content:
-                return content.strip()
+            return reply.strip()
         except Exception:
             pass # Fall back below if LLM fails
             

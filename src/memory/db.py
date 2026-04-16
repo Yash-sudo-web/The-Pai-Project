@@ -141,6 +141,39 @@ class Note(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
+class WaterIntake(Base):
+    """Water intake log entry."""
+
+    __tablename__ = "water_intake"
+
+    id = Column(Text, primary_key=True)
+    user_id = Column(Text, nullable=False)
+    amount_ml = Column(REAL, nullable=False)
+    logged_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class NutritionGoal(Base):
+    """Daily nutrition targets for a user.
+
+    Only one row per user should have ``is_active=True`` at any time.
+    When goals are updated, the old row is deactivated and a new one is
+    created, preserving goal history via ``effective_from``.
+    """
+
+    __tablename__ = "nutrition_goals"
+
+    id = Column(Text, primary_key=True)
+    user_id = Column(Text, nullable=False)
+    calories = Column(REAL, nullable=False)
+    protein_g = Column(REAL, nullable=False)
+    carbs_g = Column(REAL, nullable=False)
+    fat_g = Column(REAL, nullable=False)
+    water_ml = Column(REAL, nullable=True)  # optional daily water target
+    effective_from = Column(Date, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
 class ChatSession(Base):
     """Daily chat session — exactly one per user per calendar day."""
 

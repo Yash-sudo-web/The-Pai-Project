@@ -69,15 +69,13 @@ class CreateTaskTool(ToolDefinition):
             created_at=now,
         )
 
-        session = SessionLocal()
-        try:
-            session.add(task)
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+        with SessionLocal() as session:
+            try:
+                session.add(task)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
         return {
             "id": task_id,
@@ -92,17 +90,15 @@ class CreateTaskTool(ToolDefinition):
         if not task_id:
             return
 
-        session = SessionLocal()
-        try:
-            task = session.query(Task).filter(Task.id == task_id).first()
-            if task:
-                session.delete(task)
-                session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+        with SessionLocal() as session:
+            try:
+                task = session.query(Task).filter(Task.id == task_id).first()
+                if task:
+                    session.delete(task)
+                    session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
 
 # ---------------------------------------------------------------------------
@@ -145,27 +141,25 @@ class CompleteTaskTool(ToolDefinition):
         task_id = inputs["task_id"]
         now = datetime.now(tz=timezone.utc)
 
-        session = SessionLocal()
-        try:
-            task = session.query(Task).filter(Task.id == task_id).first()
-            if task is None:
-                raise ValueError(f"Task with id '{task_id}' not found.")
+        with SessionLocal() as session:
+            try:
+                task = session.query(Task).filter(Task.id == task_id).first()
+                if task is None:
+                    raise ValueError(f"Task with id '{task_id}' not found.")
 
-            task.status = "completed"
-            task.completed_at = now
-            session.commit()
+                task.status = "completed"
+                task.completed_at = now
+                session.commit()
 
-            return {
-                "id": task.id,
-                "title": task.title,
-                "status": "completed",
-                "completed_at": now.isoformat(),
-            }
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+                return {
+                    "id": task.id,
+                    "title": task.title,
+                    "status": "completed",
+                    "completed_at": now.isoformat(),
+                }
+            except Exception:
+                session.rollback()
+                raise
 
 
 # ---------------------------------------------------------------------------
@@ -203,11 +197,8 @@ class ProductivityDailySummaryTool(ToolDefinition):
     def execute(self, inputs: dict[str, Any]) -> Any:
         now = datetime.now(tz=timezone.utc)
 
-        session = SessionLocal()
-        try:
+        with SessionLocal() as session:
             all_tasks = session.query(Task).all()
-        finally:
-            session.close()
 
         pending = 0
         completed = 0
@@ -236,6 +227,106 @@ class ProductivityDailySummaryTool(ToolDefinition):
             "overdue": overdue,
         }
 
+# ---------------------------------------------------------------------------
+# list_tasks
+# ---------------------------------------------------------------------------
+
+_LIST_TASKS_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "status": {
+            "type": ["string", "null"],
+            "enum": ["pending", "completed", "overdue", None],
+            "description": "Filter by status. Omit to return all tasks.",
+        },
+        "search": {
+            "type": ["string", "null"],
+            "description": "Optional search term to filter tasks by title (case-insensitive substring match).",
+        },
+        "limit": {
+            "type": ["integer", "null"],
+            "description": "Maximum number of tasks to return. Defaults to 20.",
+        },
+    },
+    "additionalProperties": False,
+}
+
+_LIST_TASKS_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "status": {"type": "string"},
+                    "due_date": {"type": ["string", "null"]},
+                    "created_at": {"type": "string"},
+                    "completed_at": {"type": ["string", "null"]},
+                },
+            },
+        },
+        "total_count": {"type": "integer"},
+    },
+    "required": ["tasks", "total_count"],
+}
+
+
+class ListTasksTool(ToolDefinition):
+    """List and search tasks with optional status and title filters."""
+
+    name = "productivity.list_tasks"
+    description = (
+        "List tasks with optional filtering. Use 'status' to filter by "
+        "pending/completed/overdue, and 'search' to find tasks by title. "
+        "Returns task IDs that can be used with complete_task."
+    )
+    domain = DomainName.productivity
+    permission_level = PermissionLevel.read
+    requires_confirmation = False
+    input_schema = _LIST_TASKS_INPUT_SCHEMA
+    output_schema = _LIST_TASKS_OUTPUT_SCHEMA
+
+    def execute(self, inputs: dict[str, Any]) -> Any:
+        status_filter = inputs.get("status")
+        search_term = inputs.get("search")
+        limit = inputs.get("limit") or 20
+
+        with SessionLocal() as session:
+            query = session.query(Task).filter(Task.user_id == "default_user")
+
+            if status_filter:
+                query = query.filter(Task.status == status_filter)
+
+            if search_term:
+                query = query.filter(Task.title.ilike(f"%{search_term}%"))
+
+            tasks = (
+                query
+                .order_by(Task.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+
+            total_count = query.count()
+
+        return {
+            "tasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "status": t.status,
+                    "due_date": t.due_date.isoformat() if t.due_date else None,
+                    "created_at": t.created_at.isoformat(),
+                    "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                }
+                for t in tasks
+            ],
+            "total_count": total_count,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Registration helper
@@ -247,3 +338,4 @@ def register_productivity_tools(registry: ToolRegistry) -> None:
     registry.register(CreateTaskTool())
     registry.register(CompleteTaskTool())
     registry.register(ProductivityDailySummaryTool())
+    registry.register(ListTasksTool())

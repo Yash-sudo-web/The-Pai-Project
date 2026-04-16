@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any
+import logging
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
@@ -89,6 +90,33 @@ def create_app(
             features={"browser_voice_input": True, "backend_transcription": transcription_engine is not None},
             voice_input_mode="media_recorder_upload",
         )
+
+    @app.get("/health")
+    async def health_check() -> dict[str, Any]:
+        """System health check — reports DB connectivity and configuration status."""
+        status: dict[str, Any] = {"status": "ok", "checks": {}}
+
+        # DB connectivity
+        try:
+            from src.memory.db import SessionLocal as HealthSessionLocal
+            with HealthSessionLocal() as db:
+                db.execute(__import__("sqlalchemy").text("SELECT 1"))
+            status["checks"]["database"] = "connected"
+        except Exception as exc:
+            status["status"] = "degraded"
+            status["checks"]["database"] = f"error: {exc}"
+
+        # LLM API key configured
+        llm_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        status["checks"]["llm_api_key"] = "configured" if llm_key else "missing"
+
+        # Voice
+        status["checks"]["transcription"] = "available" if transcription_engine else "disabled"
+
+        # Chat sessions
+        status["checks"]["chat_sessions"] = "available" if session_manager else "disabled"
+
+        return status
 
     @app.post("/voice/transcribe", response_model=TranscriptionResponse, include_in_schema=False)
     async def transcribe_audio(
@@ -181,11 +209,20 @@ def create_app(
         app.state.command_tasks[pending_id] = future
         return {"status": "pending_confirmation", "pending_id": pending_id}
 
+    _MAX_COMMAND_LENGTH = 4000  # Prevent sending excessive prompts to LLM
+
     @app.post("/command")
     async def post_command(
         payload: CommandRequest,
         client: AuthenticatedClient = Depends(auth_manager.authenticate),
     ) -> dict[str, Any]:
+        if not payload.command.strip():
+            raise HTTPException(status_code=400, detail="Command cannot be empty")
+        if len(payload.command) > _MAX_COMMAND_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Command too long ({len(payload.command)} chars). Maximum is {_MAX_COMMAND_LENGTH}.",
+            )
         return await _dispatch_command(payload.command, client)
 
     @app.get("/status/{pending_id}")

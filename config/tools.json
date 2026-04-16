@@ -15,6 +15,27 @@
       "rate_limit": { "max_calls": 30, "window_seconds": 60 }
     },
     {
+      "name": "gym.get_workout_history",
+      "domain": "gym",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "gym.check_pr",
+      "domain": "gym",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "gym.suggest_progression",
+      "domain": "gym",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
       "name": "nutrition.log_meal",
       "domain": "nutrition",
       "permission_level": "write",
@@ -27,6 +48,41 @@
       "permission_level": "read",
       "requires_confirmation": false,
       "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "nutrition.log_water",
+      "domain": "nutrition",
+      "permission_level": "write",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "nutrition.set_goals",
+      "domain": "nutrition",
+      "permission_level": "write",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 10, "window_seconds": 60 }
+    },
+    {
+      "name": "nutrition.check_goals",
+      "domain": "nutrition",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "nutrition.meal_suggestion",
+      "domain": "nutrition",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "nutrition.nutrition_report",
+      "domain": "nutrition",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 10, "window_seconds": 60 }
     },
     {
       "name": "productivity.create_task",
@@ -44,6 +100,13 @@
     },
     {
       "name": "productivity.daily_summary",
+      "domain": "productivity",
+      "permission_level": "read",
+      "requires_confirmation": false,
+      "rate_limit": { "max_calls": 30, "window_seconds": 60 }
+    },
+    {
+      "name": "productivity.list_tasks",
       "domain": "productivity",
       "permission_level": "read",
       "requires_confirmation": false,
