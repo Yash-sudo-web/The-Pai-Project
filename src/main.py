@@ -25,8 +25,6 @@ from src.safety.confirmation import ConfirmationLayer
 from src.safety.permissions import PermissionSystem
 from src.safety.rate_limiter import RateLimiter
 from src.tools.registry import ToolRegistry
-from src.voice.transcription import TranscriptionEngine
-from src.voice.voice_input import VoiceInputModule
 
 
 @dataclass
@@ -43,7 +41,6 @@ class ApplicationRuntime:
     orchestrator: Orchestrator
     auth_manager: AuthManager
     app: Any
-    voice_module: VoiceInputModule | None
 
 
 def _register_domain_tools(registry: ToolRegistry, disabled_domains: set[str]) -> None:
@@ -59,7 +56,7 @@ def _register_domain_tools(registry: ToolRegistry, disabled_domains: set[str]) -
         registrar(registry)
 
 
-def create_runtime(config: AppConfig = app_config, enable_voice: bool = False) -> ApplicationRuntime:
+def create_runtime(config: AppConfig = app_config) -> ApplicationRuntime:
     """Build and wire the application runtime."""
     init_db()
     tools_config = config.tools
@@ -109,23 +106,13 @@ def create_runtime(config: AppConfig = app_config, enable_voice: bool = False) -
     from src.remote.auth import AuthManager
 
     auth_manager = AuthManager(audit_log=audit_log, auth_config=remote_config)
-    transcription_engine = TranscriptionEngine()
     app = create_app(
         orchestrator,
         confirmation_layer,
         auth_manager,
         permissions_config,
-        transcription_engine=transcription_engine,
         session_manager=chat_session_manager,
     )
-
-    voice_module = None
-    if enable_voice:
-        voice_module = VoiceInputModule(
-            transcription_engine=transcription_engine,
-            on_transcription=lambda _text: None,
-            audit_log=audit_log,
-        )
 
     return ApplicationRuntime(
         config=config,
@@ -140,7 +127,6 @@ def create_runtime(config: AppConfig = app_config, enable_voice: bool = False) -
         orchestrator=orchestrator,
         auth_manager=auth_manager,
         app=app,
-        voice_module=voice_module,
     )
 
 

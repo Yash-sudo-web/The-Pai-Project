@@ -8,8 +8,8 @@ from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as Futur
 from typing import Any
 import logging
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 from fastapi.websockets import WebSocketState
 from pydantic import BaseModel
 
@@ -19,9 +19,7 @@ from src.remote.auth import AuthManager, AuthenticatedClient
 from src.remote.dashboard import render_dashboard_html
 from src.safety.confirmation import ConfirmationLayer
 from src.types import PermissionLevel
-from src.voice.transcription import TranscriptionEngine, TranscriptionError
 from src.memory.chat_sessions import ChatSessionManager
-import os
 
 
 class CommandRequest(BaseModel):
@@ -39,14 +37,6 @@ class MetaResponse(BaseModel):
     voice_input_mode: str
 
 
-class TranscriptionResponse(BaseModel):
-    text: str
-
-
-class TTSRequest(BaseModel):
-    text: str
-
-
 def _resolve_grants(permissions: PermissionsConfig, session_name: str) -> list[PermissionLevel]:
     session_config = permissions.get(session_name) or permissions.get("remote_session")
     if session_config is None:
@@ -61,7 +51,6 @@ def create_app(
     confirmation_layer: ConfirmationLayer,
     auth_manager: AuthManager,
     permissions_config: PermissionsConfig,
-    transcription_engine: TranscriptionEngine | None = None,
     session_manager: ChatSessionManager | None = None,
 ) -> FastAPI:
     """Create the FastAPI app with REST and WebSocket endpoints."""
@@ -87,8 +76,8 @@ def create_app(
     @app.get("/meta", response_model=MetaResponse, include_in_schema=False)
     async def meta() -> MetaResponse:
         return MetaResponse(
-            features={"browser_voice_input": True, "backend_transcription": transcription_engine is not None},
-            voice_input_mode="media_recorder_upload",
+            features={"browser_voice_input": False, "backend_transcription": False},
+            voice_input_mode="client_only",
         )
 
     @app.get("/health")
@@ -118,58 +107,6 @@ def create_app(
 
         return status
 
-    @app.post("/voice/transcribe", response_model=TranscriptionResponse, include_in_schema=False)
-    async def transcribe_audio(
-        client: AuthenticatedClient = Depends(auth_manager.authenticate),
-        audio: UploadFile = File(...),
-    ) -> TranscriptionResponse:
-        _ = client
-        if transcription_engine is None:
-            raise HTTPException(status_code=503, detail="Voice transcription is not configured")
-
-        payload = await audio.read()
-        if not payload:
-            raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
-
-        try:
-            text = transcription_engine.transcribe(payload)
-        except TranscriptionError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        return TranscriptionResponse(text=text)
-
-    @app.post("/voice/tts", include_in_schema=False)
-    def text_to_speech(
-        payload: TTSRequest,
-        client: AuthenticatedClient = Depends(auth_manager.authenticate),
-    ) -> Response:
-        _ = client
-        
-
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise HTTPException(status_code=503, detail="OpenAI client unavailable") from exc
-
-        api_key = os.environ.get("GROQ_API_KEY")
-        base_url = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-        if not api_key:
-            raise HTTPException(status_code=503, detail="Groq API key not configured")
-
-        client_openai = OpenAI(api_key=api_key, base_url=base_url)
-        
-        try:
-            response = client_openai.audio.speech.create(
-                model="canopylabs/orpheus-v1-english",
-                voice="diana",
-                input=payload.text,
-                response_format="wav"
-            )
-            return Response(content=response.read(), media_type="audio/wav")
-        except Exception as exc:
-            import logging
-            logging.exception("TTS Error")
-            raise HTTPException(status_code=500, detail=str(exc))
 
     async def _run_command(command: str, client: AuthenticatedClient):
         session = SessionContext(

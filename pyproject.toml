@@ -8,9 +8,6 @@ version = "0.1.0"
 description = "A personal AI operating layer for orchestrating tasks across life domains"
 requires-python = ">=3.11"
 
-# ── Cloud-safe deps ────────────────────────────────────────────────────────
-# These are the ONLY packages installed in serverless / CI environments.
-# Heavy native packages live in the [local] optional extra below.
 dependencies = [
     "openai>=1.0.0",
     "fastapi>=0.110.0",
@@ -24,17 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Install locally with:  pip install -e ".[local]"
-# These require native system libraries and Python 3.11 wheels — not for Vercel.
-local = [
-    "psycopg[binary]>=3.2.0",
-    "pyautogui>=0.9.54",
-    "openai-whisper>=20231117",
-    "sounddevice>=0.4.6",
-    "soundfile>=0.12.1",
-    "pynput>=1.7.6",
-    "openwakeword>=0.6.0",
-]
 vector = [
     "chromadb>=0.4.0",
 ]

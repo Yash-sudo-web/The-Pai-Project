@@ -103,7 +103,6 @@ def _build_app() -> FastAPI:
             confirmation_layer,
             auth_manager,
             permissions_cfg,
-            transcription_engine=None,  # Whisper not available in serverless env
             session_manager=chat_session_manager,
         )
 
