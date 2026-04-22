@@ -1,0 +1,14 @@
+# Vercel-compatible dependencies (cloud-safe subset)
+# Heavy local deps (openai-whisper, sounddevice, pyautogui, pynput, openwakeword)
+# are intentionally excluded — they require native binaries unavailable in
+# Vercel's serverless build environment.
+
+openai>=1.0.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.0.0
+sqlalchemy>=2.0.0
+python-jose[cryptography]>=3.3.0
+python-multipart>=0.0.9
+jsonschema>=4.21.0
+langsmith>=0.3.0
