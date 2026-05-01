@@ -35,6 +35,11 @@ def _resolve_database_url() -> str:
     if explicit:
         return explicit
 
+    # Vercel's project root (/var/task) is read-only — only /tmp is writable.
+    # VERCEL env var is set automatically on all Vercel deployments.
+    if os.environ.get("VERCEL") or not os.access(".", os.W_OK):
+        return "sqlite:////tmp/assistant.db"
+
     return "sqlite:///./assistant.db"
 
 

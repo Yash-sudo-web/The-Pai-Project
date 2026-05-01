@@ -30,8 +30,8 @@ class ChatProvider extends ChangeNotifier {
   bool _isThinking = false;
   bool _isRecording = false;
   String _liveTranscript = '';
-  bool _ttsEnabled;
-  bool _isConfigured;
+  late bool _ttsEnabled;
+  late bool _isConfigured;
   String? _pendingConfirmationId;
   String? _statusError;
   bool _isOnline = true;
