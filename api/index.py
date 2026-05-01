@@ -46,7 +46,13 @@ def _build_app() -> FastAPI:
         from src.domains.nutrition.tools import register_nutrition_tools
         from src.domains.productivity.tools import register_productivity_tools
 
-        init_db()
+        try:
+            init_db()
+        except Exception:
+            # Tables already exist in the remote DB — create_all() is a no-op.
+            # On Vercel, an IPv6-only DATABASE_URL will fail here; switch to the
+            # Supabase pooler URL (IPv4) in Vercel env vars to resolve this.
+            logger.warning("init_db() failed — assuming tables already exist", exc_info=True)
 
         cfg: AppConfig = app_config
         tools_cfg = cfg.tools
