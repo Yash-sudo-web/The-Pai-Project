@@ -33,10 +33,16 @@ load_env_file()
 def _resolve_database_url() -> str:
     explicit = os.environ.get("DATABASE_URL")
     if explicit:
-        return explicit
+        # Normalise to psycopg v3 driver — Supabase pooler URLs use plain
+        # postgresql:// which SQLAlchemy maps to psycopg2 (v2) by default.
+        url = explicit
+        for old_scheme in ("postgresql+psycopg2://", "postgresql://", "postgres://"):
+            if url.startswith(old_scheme):
+                url = "postgresql+psycopg://" + url[len(old_scheme):]
+                break
+        return url
 
     # Vercel's project root (/var/task) is read-only — only /tmp is writable.
-    # VERCEL env var is set automatically on all Vercel deployments.
     if os.environ.get("VERCEL") or not os.access(".", os.W_OK):
         return "sqlite:////tmp/assistant.db"
 
