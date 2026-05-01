@@ -20,6 +20,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 logger = logging.getLogger(__name__)
+_init_error: str | None = None  # populated when _build_app() fails
 
 
 def _build_app() -> FastAPI:
@@ -106,13 +107,20 @@ def _build_app() -> FastAPI:
             session_manager=chat_session_manager,
         )
 
-    except Exception:
+    except Exception as exc:
+        import traceback
+        global _init_error
+        _init_error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
         logger.exception("PAI runtime failed to initialise; starting in degraded mode")
         _app = FastAPI(title="Personal AI Assistant (degraded)")
 
         @_app.get("/health")
         async def health():
-            return {"status": "degraded", "reason": "runtime failed to initialize"}
+            return {
+                "status": "degraded",
+                "reason": "runtime failed to initialize",
+                "error": _init_error,
+            }
 
         return _app
 
