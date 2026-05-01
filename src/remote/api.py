@@ -96,11 +96,12 @@ def create_app(
             status["checks"]["database"] = f"error: {exc}"
 
         # LLM API key configured
-        llm_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        import os as _os
+        llm_key = _os.environ.get("OPENROUTER_API_KEY") or _os.environ.get("OPENAI_API_KEY")
         status["checks"]["llm_api_key"] = "configured" if llm_key else "missing"
 
-        # Voice
-        status["checks"]["transcription"] = "available" if transcription_engine else "disabled"
+        # Voice (moved to client — always show disabled on server)
+        status["checks"]["transcription"] = "disabled (client-side)"
 
         # Chat sessions
         status["checks"]["chat_sessions"] = "available" if session_manager else "disabled"
