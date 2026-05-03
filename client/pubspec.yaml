@@ -12,9 +12,7 @@ dependencies:
   # HTTP & WebSocket
   http: ^1.2.1
   web_socket_channel: ^3.0.1
-  # Voice
-  speech_to_text: ^6.6.2
-  flutter_tts: ^4.0.2
+  # Voice handled via Groq API (http package) — no native plugins needed
   # State
   provider: ^6.1.2
   # Storage

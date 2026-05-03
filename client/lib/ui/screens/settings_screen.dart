@@ -14,7 +14,9 @@ class SettingsDialog extends StatefulWidget {
 class _SettingsDialogState extends State<SettingsDialog> {
   late final TextEditingController _urlController;
   late final TextEditingController _keyController;
+  late final TextEditingController _groqKeyController;
   bool _obscureKey = true;
+  bool _obscureGroqKey = true;
   bool _saving = false;
   String? _saveError;
 
@@ -24,18 +26,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final provider = context.read<ChatProvider>();
     _urlController = TextEditingController(text: provider.currentBaseUrl);
     _keyController = TextEditingController(text: provider.currentApiKey);
+    _groqKeyController = TextEditingController(text: provider.currentGroqKey);
   }
 
   @override
   void dispose() {
     _urlController.dispose();
     _keyController.dispose();
+    _groqKeyController.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     final url = _urlController.text.trim();
     final key = _keyController.text.trim();
+    final groqKey = _groqKeyController.text.trim();
 
     if (url.isEmpty || !url.startsWith('http')) {
       setState(() => _saveError = 'Enter a valid URL (starts with https://)');
@@ -51,7 +56,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _saveError = null;
     });
 
-    await context.read<ChatProvider>().saveConfig(baseUrl: url, apiKey: key);
+    await context.read<ChatProvider>().saveConfig(
+      baseUrl: url,
+      apiKey: key,
+      groqApiKey: groqKey,
+    );
 
     if (mounted) Navigator.of(context).pop();
   }
@@ -144,6 +153,33 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     onPressed: () =>
                         setState(() => _obscureKey = !_obscureKey),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Groq API Key (for voice)
+              const _Label('Groq API Key (voice)'),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _groqKeyController,
+                obscureText: _obscureGroqKey,
+                style:
+                    const TextStyle(color: kTextPrimary, fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: 'gsk_... (optional — enables voice)',
+                  prefixIcon: const Icon(Icons.mic_rounded,
+                      color: kTextMuted, size: 18),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscureGroqKey
+                          ? Icons.visibility_rounded
+                          : Icons.visibility_off_rounded,
+                      color: kTextMuted,
+                      size: 18,
+                    ),
+                    onPressed: () =>
+                        setState(() => _obscureGroqKey = !_obscureGroqKey),
                   ),
                 ),
               ),

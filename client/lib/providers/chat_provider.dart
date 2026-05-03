@@ -19,6 +19,7 @@ class ChatProvider extends ChangeNotifier {
         _prefs = prefs {
     _ttsEnabled = prefs.getBool('pai_tts_enabled') ?? true;
     _isConfigured = AppConfig.isConfigured(prefs);
+    _configureVoiceServices();
   }
 
   final ApiService _api;
@@ -52,15 +53,27 @@ class ChatProvider extends ChangeNotifier {
 
   String get currentBaseUrl => AppConfig.getBaseUrl(_prefs);
   String get currentApiKey => AppConfig.getApiKey(_prefs);
+  String get currentGroqKey => AppConfig.getGroqApiKey(_prefs);
+
+  void _configureVoiceServices() {
+    final groqKey = AppConfig.getGroqApiKey(_prefs);
+    if (groqKey.isNotEmpty) {
+      _stt.configure(groqApiKey: groqKey);
+      _tts.configure(groqApiKey: groqKey);
+    }
+  }
 
   Future<void> saveConfig({
     required String baseUrl,
     required String apiKey,
+    required String groqApiKey,
   }) async {
     await AppConfig.saveBaseUrl(_prefs, baseUrl);
     await AppConfig.saveApiKey(_prefs, apiKey);
+    await AppConfig.saveGroqApiKey(_prefs, groqApiKey);
     _isConfigured = AppConfig.isConfigured(_prefs);
     _statusError = null;
+    _configureVoiceServices();
     notifyListeners();
   }
 
@@ -150,28 +163,27 @@ class ChatProvider extends ChangeNotifier {
   Future<void> startRecording() async {
     if (_isRecording || _isThinking) return;
     _isRecording = true;
-    _liveTranscript = '';
+    _liveTranscript = 'Listening…';
     notifyListeners();
 
     await _stt.startListening(
       onResult: (text, isFinal) {
-        _liveTranscript = text;
-        notifyListeners();
-        if (isFinal && text.trim().isNotEmpty) {
-          stopRecordingAndSend();
-        }
+        // Groq STT doesn't stream — this callback isn't used in the new flow
       },
     );
   }
 
   Future<void> stopRecordingAndSend() async {
     if (!_isRecording) return;
-    await _stt.stopListening();
+    _liveTranscript = 'Transcribing…';
+    notifyListeners();
+
+    final transcript = await _stt.stopListeningAndTranscribe();
     _isRecording = false;
-    final transcript = _liveTranscript.trim();
     _liveTranscript = '';
     notifyListeners();
-    if (transcript.isNotEmpty) {
+
+    if (transcript != null && transcript.trim().isNotEmpty) {
       await sendCommand(transcript);
     }
   }

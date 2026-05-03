@@ -7,6 +7,7 @@ class AppConfig {
 
   static const _keyBaseUrl = 'pai_base_url';
   static const _keyApiKey = 'pai_api_key';
+  static const _keyGroqKey = 'pai_groq_api_key';
 
   static String getBaseUrl(SharedPreferences prefs) {
     var url = prefs.getString(_keyBaseUrl) ??
@@ -20,11 +21,19 @@ class AppConfig {
         const String.fromEnvironment('PAI_API_KEY', defaultValue: '');
   }
 
+  static String getGroqApiKey(SharedPreferences prefs) {
+    return prefs.getString(_keyGroqKey) ??
+        const String.fromEnvironment('GROQ_API_KEY', defaultValue: '');
+  }
+
   static Future<void> saveBaseUrl(SharedPreferences prefs, String url) =>
       prefs.setString(_keyBaseUrl, url.trim());
 
   static Future<void> saveApiKey(SharedPreferences prefs, String key) =>
       prefs.setString(_keyApiKey, key.trim());
+
+  static Future<void> saveGroqApiKey(SharedPreferences prefs, String key) =>
+      prefs.setString(_keyGroqKey, key.trim());
 
   static bool isConfigured(SharedPreferences prefs) {
     final url = getBaseUrl(prefs);
@@ -32,3 +41,4 @@ class AppConfig {
     return url.isNotEmpty && key.isNotEmpty;
   }
 }
+
