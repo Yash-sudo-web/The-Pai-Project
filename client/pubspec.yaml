@@ -12,7 +12,9 @@ dependencies:
   # HTTP & WebSocket
   http: ^1.2.1
   web_socket_channel: ^3.0.1
-  # Voice handled via Groq API (http package) — no native plugins needed
+  # Voice — Groq API for STT/TTS
+  audioplayers: ^6.1.0
+  ffi: ^2.1.0
   # State
   provider: ^6.1.2
   # Storage

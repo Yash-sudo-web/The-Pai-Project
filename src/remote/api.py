@@ -262,4 +262,16 @@ def create_app(
         sessions = session_manager.get_sessions_list("default_user", limit=limit)
         return {"sessions": sessions}
 
+    @app.get("/chat/session/{session_id}/messages")
+    async def get_session_messages(
+        session_id: str,
+        limit: int = 100,
+    ) -> dict:
+        """Return messages for a specific session by ID."""
+        if session_manager is None:
+            raise HTTPException(status_code=503, detail="Chat sessions not configured")
+
+        messages = session_manager.get_messages(session_id, limit=limit)
+        return {"session_id": session_id, "messages": messages}
+
     return app

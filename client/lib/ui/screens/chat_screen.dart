@@ -5,9 +5,8 @@ import 'package:provider/provider.dart';
 import '../../app.dart';
 import '../../providers/chat_provider.dart';
 import '../widgets/message_bubble.dart';
-import '../widgets/sidebar.dart';
 import '../widgets/thinking_indicator.dart';
-import '../widgets/voice_button.dart';
+import 'chat_history_panel.dart';
 import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -25,36 +24,43 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    // Show settings if not configured yet
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = context.read<ChatProvider>();
-      if (!provider.isConfigured) {
-        _openSettings();
-      }
+      if (!provider.isConfigured) _openSettings();
+      // Listen for transcribed text from voice
+      provider.addListener(_onProviderChange);
     });
+  }
+
+  void _onProviderChange() {
+    final provider = context.read<ChatProvider>();
+    final text = provider.transcribedText;
+    if (text != null) {
+      _inputController.text = text;
+      _inputController.selection =
+          TextSelection.collapsed(offset: text.length);
+      provider.consumeTranscribedText();
+      _focusNode.requestFocus();
+    }
   }
 
   @override
   void dispose() {
+    context.read<ChatProvider>().removeListener(_onProviderChange);
     _inputController.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  void _scrollToBottom({bool animate = true}) {
+  void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
-      final target = _scrollController.position.maxScrollExtent;
-      if (animate) {
-        _scrollController.animateTo(
-          target,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      } else {
-        _scrollController.jumpTo(target);
-      }
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
     });
   }
 
@@ -75,33 +81,36 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  String _greeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good Morning.';
+    if (hour < 17) return 'Good Afternoon.';
+    return 'Good Evening.';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: kBg,
       body: Row(
         children: [
-          // ── Sidebar ──────────────────────────────────────────────────────
-          AppSidebar(onSettingsTap: _openSettings),
+          // ── Left Sidebar ──────────────────────────────────────────────
+          _LeftSidebar(onSettingsTap: _openSettings),
 
-          // ── Divider ──────────────────────────────────────────────────────
-          const VerticalDivider(width: 1, thickness: 1, color: kBorder),
-
-          // ── Main chat area ───────────────────────────────────────────────
+          // ── Center: Mic & Greeting ────────────────────────────────────
           Expanded(
-            child: Column(
-              children: [
-                _ChatHeader(onSettingsTap: _openSettings),
-                const Divider(height: 1, thickness: 1, color: kBorder),
-                Expanded(child: _MessageList(scrollController: _scrollController)),
-                _ConfirmationBar(),
-                _InputBar(
-                  controller: _inputController,
-                  focusNode: _focusNode,
-                  onSend: _send,
-                  onScrollToBottom: _scrollToBottom,
-                ),
-              ],
+            flex: 3,
+            child: _CenterArea(greeting: _greeting()),
+          ),
+
+          // ── Right: Chat Panel ─────────────────────────────────────────
+          SizedBox(
+            width: 360,
+            child: _ChatPanel(
+              inputController: _inputController,
+              scrollController: _scrollController,
+              focusNode: _focusNode,
+              onSend: _send,
             ),
           ),
         ],
@@ -110,62 +119,137 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-// ── Chat header ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// LEFT SIDEBAR
+// ═══════════════════════════════════════════════════════════════════════════════
 
-class _ChatHeader extends StatelessWidget {
-  const _ChatHeader({required this.onSettingsTap});
+class _LeftSidebar extends StatelessWidget {
+  const _LeftSidebar({required this.onSettingsTap});
   final VoidCallback onSettingsTap;
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ChatProvider>();
+
     return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      width: 200,
       color: kSurface,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Chat',
-            style: TextStyle(
-              color: kTextPrimary,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 12),
-          // Online indicator
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: provider.isOnline ? kSuccess : kError,
-              boxShadow: [
-                BoxShadow(
-                  color: (provider.isOnline ? kSuccess : kError).withOpacity(0.4),
-                  blurRadius: 6,
+          // Logo
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      colors: [kAccent, kPrimary],
+                    ),
+                  ),
+                  child: const Icon(Icons.auto_awesome, color: Colors.white, size: 16),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'the PAI\nProject',
+                    style: TextStyle(
+                      color: kTextPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                    ),
+                  ),
                 ),
               ],
             ),
-          ).animate(onPlay: (c) => c.repeat(reverse: true))
-              .scaleXY(end: 1.3, duration: 1200.ms, curve: Curves.easeInOut),
-          const Spacer(),
-          // Clear chat
-          IconButton(
-            tooltip: 'Clear chat',
-            icon: const Icon(Icons.delete_outline_rounded, size: 20),
-            color: kTextSecondary,
-            onPressed: provider.clearChat,
           ),
-          // Load history
-          IconButton(
-            tooltip: 'Load today\'s history',
-            icon: const Icon(Icons.history_rounded, size: 20),
-            color: kTextSecondary,
-            onPressed: () async {
-              await context.read<ChatProvider>().loadHistory();
+
+          const SizedBox(height: 8),
+
+          // Nav items
+          _NavItem(
+            icon: Icons.dashboard_rounded,
+            label: 'Dashboard',
+            selected: true,
+          ),
+          _NavItem(
+            icon: Icons.history_rounded,
+            label: 'Chat History',
+            onTap: () {
+              showDialog(
+                context: context,
+                barrierColor: Colors.transparent,
+                builder: (_) => const ChatHistoryPanel(),
+              );
             },
+          ),
+          _NavItem(
+            icon: Icons.delete_outline_rounded,
+            label: 'Clear Chat',
+            onTap: () => provider.clearChat(),
+          ),
+          _NavItem(
+            icon: Icons.settings_rounded,
+            label: 'Settings',
+            onTap: onSettingsTap,
+          ),
+
+          const Spacer(),
+
+          // TTS toggle
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                const Icon(Icons.volume_up_rounded, color: kTextMuted, size: 16),
+                const SizedBox(width: 8),
+                const Text('TTS', style: TextStyle(color: kTextMuted, fontSize: 12)),
+                const Spacer(),
+                Switch(
+                  value: provider.ttsEnabled,
+                  onChanged: provider.setTtsEnabled,
+                  activeColor: kAccent,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ],
+            ),
+          ),
+
+          // Status
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: provider.isOnline ? kSuccess : kError,
+                    boxShadow: [
+                      BoxShadow(
+                        color: (provider.isOnline ? kSuccess : kError)
+                            .withOpacity(0.5),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  provider.isOnline ? 'System Ready' : 'Offline',
+                  style: TextStyle(
+                    color: provider.isOnline ? kSuccess : kError,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -173,10 +257,293 @@ class _ChatHeader extends StatelessWidget {
   }
 }
 
-// ── Message list ─────────────────────────────────────────────────────────────
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    this.selected = false,
+    this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
 
-class _MessageList extends StatelessWidget {
-  const _MessageList({required this.scrollController});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: Material(
+        color: selected ? kPrimary.withOpacity(0.15) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          hoverColor: kSurfaceVar,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(icon,
+                    size: 18,
+                    color: selected ? kAccent : kTextSecondary),
+                const SizedBox(width: 10),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? kAccent : kTextSecondary,
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CENTER AREA — Greeting + Mic Button
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _CenterArea extends StatelessWidget {
+  const _CenterArea({required this.greeting});
+  final String greeting;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: kBg,
+      child: Column(
+        children: [
+          const SizedBox(height: 48),
+          // Greeting
+          Text(
+            greeting,
+            style: const TextStyle(
+              color: kTextPrimary,
+              fontSize: 32,
+              fontWeight: FontWeight.w700,
+            ),
+          ).animate().fadeIn(duration: 600.ms).slideY(begin: -0.1),
+
+          const Spacer(),
+
+          // Mic button
+          const _MicButton(),
+
+          const Spacer(),
+          const SizedBox(height: 48),
+        ],
+      ),
+    );
+  }
+}
+
+class _MicButton extends StatefulWidget {
+  const _MicButton();
+
+  @override
+  State<_MicButton> createState() => _MicButtonState();
+}
+
+class _MicButtonState extends State<_MicButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<ChatProvider>();
+    final voiceState = provider.voiceState;
+
+    // Drive pulse animation
+    if (voiceState == VoiceState.recording) {
+      _pulseController.repeat(reverse: true);
+    } else {
+      _pulseController.stop();
+      _pulseController.reset();
+    }
+
+    return GestureDetector(
+      onTap: provider.isThinking ? null : () => provider.toggleRecording(),
+      child: AnimatedBuilder(
+        animation: _pulseController,
+        builder: (context, child) {
+          final pulseScale = voiceState == VoiceState.recording
+              ? 1.0 + (_pulseController.value * 0.15)
+              : 1.0;
+          final glowOpacity = voiceState == VoiceState.recording
+              ? 0.3 + (_pulseController.value * 0.4)
+              : 0.15;
+
+          return Transform.scale(
+            scale: pulseScale,
+            child: Container(
+              width: 140,
+              height: 140,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: voiceState == VoiceState.recording
+                      ? kAccent
+                      : voiceState == VoiceState.transcribing
+                          ? kPrimary
+                          : kAccent.withOpacity(0.4),
+                  width: 2.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (voiceState == VoiceState.recording
+                            ? kAccent
+                            : kPrimary)
+                        .withOpacity(glowOpacity),
+                    blurRadius: voiceState == VoiceState.recording ? 40 : 20,
+                    spreadRadius:
+                        voiceState == VoiceState.recording ? 8 : 2,
+                  ),
+                ],
+              ),
+              child: Center(
+                child: voiceState == VoiceState.transcribing
+                    ? const SizedBox(
+                        width: 36,
+                        height: 36,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: kAccent,
+                        ),
+                      )
+                    : Icon(
+                        voiceState == VoiceState.recording
+                            ? Icons.stop_rounded
+                            : Icons.mic_rounded,
+                        color: voiceState == VoiceState.recording
+                            ? kAccent
+                            : kAccent.withOpacity(0.8),
+                        size: 48,
+                      ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// Wrapper because AnimatedBuilder is a typedef for AnimatedWidget
+class AnimatedBuilder extends AnimatedWidget {
+  const AnimatedBuilder({
+    super.key,
+    required Animation<double> animation,
+    required this.builder,
+  }) : super(listenable: animation);
+
+  final Widget Function(BuildContext context, Widget? child) builder;
+
+  @override
+  Widget build(BuildContext context) => builder(context, null);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RIGHT CHAT PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _ChatPanel extends StatelessWidget {
+  const _ChatPanel({
+    required this.inputController,
+    required this.scrollController,
+    required this.focusNode,
+    required this.onSend,
+  });
+  final TextEditingController inputController;
+  final ScrollController scrollController;
+  final FocusNode focusNode;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: kSurface,
+        border: Border(left: BorderSide(color: kBorder)),
+      ),
+      child: Column(
+        children: [
+          // Header
+          _PanelHeader(),
+          const Divider(height: 1, color: kBorder),
+
+          // Messages
+          Expanded(child: _MessageArea(scrollController: scrollController)),
+
+          // Confirmation bar
+          _ConfirmationBar(),
+
+          // Input
+          _ChatInput(
+            controller: inputController,
+            focusNode: focusNode,
+            onSend: onSend,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PanelHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final dateStr =
+        '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year} | '
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        children: [
+          const Text(
+            'Interaction Log',
+            style: TextStyle(
+              color: kTextPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            dateStr,
+            style: const TextStyle(color: kTextMuted, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageArea extends StatelessWidget {
+  const _MessageArea({required this.scrollController});
   final ScrollController scrollController;
 
   @override
@@ -186,12 +553,18 @@ class _MessageList extends StatelessWidget {
     final isThinking = provider.isThinking;
 
     if (messages.isEmpty && !isThinking) {
-      return _EmptyState();
+      return Center(
+        child: Text(
+          'No messages yet.\nSpeak or type to begin.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: kTextMuted, fontSize: 13, height: 1.6),
+        ).animate().fadeIn(duration: 400.ms),
+      );
     }
 
     return ListView.builder(
       controller: scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       itemCount: messages.length + (isThinking ? 1 : 0),
       itemBuilder: (context, index) {
         if (index == messages.length) {
@@ -201,59 +574,13 @@ class _MessageList extends StatelessWidget {
           );
         }
         return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.only(bottom: 10),
           child: MessageBubble(message: messages[index]),
         );
       },
     );
   }
 }
-
-class _EmptyState extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                colors: [kPrimary, Color(0xFF4F1D96)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: kPrimary.withOpacity(0.3),
-                  blurRadius: 24,
-                  spreadRadius: 4,
-                ),
-              ],
-            ),
-            child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 32),
-          ).animate().scaleXY(begin: 0.8, duration: 600.ms, curve: Curves.elasticOut),
-          const SizedBox(height: 20),
-          const Text(
-            'Hello, I\'m PAI',
-            style: TextStyle(color: kTextPrimary, fontSize: 22, fontWeight: FontWeight.w700),
-          ).animate().fadeIn(delay: 200.ms, duration: 400.ms),
-          const SizedBox(height: 8),
-          const Text(
-            'Your personal AI assistant.\nType a command or tap the mic to speak.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: kTextSecondary, fontSize: 14, height: 1.6),
-          ).animate().fadeIn(delay: 350.ms, duration: 400.ms),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Confirmation bar ──────────────────────────────────────────────────────────
 
 class _ConfirmationBar extends StatelessWidget {
   @override
@@ -262,178 +589,116 @@ class _ConfirmationBar extends StatelessWidget {
     if (!provider.hasPendingConfirmation) return const SizedBox.shrink();
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: kSurfaceVar,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.5)),
+        borderRadius: BorderRadius.circular(10),
+        border:
+            Border.all(color: const Color(0xFFF59E0B).withOpacity(0.5)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, color: Color(0xFFF59E0B), size: 18),
-          const SizedBox(width: 10),
+          const Icon(Icons.warning_amber_rounded,
+              color: Color(0xFFF59E0B), size: 16),
+          const SizedBox(width: 8),
           const Expanded(
-            child: Text(
-              'This action needs your confirmation',
-              style: TextStyle(color: kTextPrimary, fontSize: 13),
-            ),
+            child: Text('Confirm this action?',
+                style: TextStyle(color: kTextPrimary, fontSize: 12)),
           ),
-          const SizedBox(width: 12),
           TextButton(
             onPressed: provider.rejectAction,
-            style: TextButton.styleFrom(foregroundColor: kError),
-            child: const Text('Reject'),
+            style: TextButton.styleFrom(
+                foregroundColor: kError,
+                padding: const EdgeInsets.symmetric(horizontal: 10)),
+            child: const Text('Reject', style: TextStyle(fontSize: 12)),
           ),
-          const SizedBox(width: 8),
           ElevatedButton(
             onPressed: provider.approveAction,
             style: ElevatedButton.styleFrom(
               backgroundColor: kPrimary,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6)),
             ),
-            child: const Text('Approve'),
+            child: const Text('Approve', style: TextStyle(fontSize: 12)),
           ),
         ],
       ),
-    ).animate().slideY(begin: 0.3, duration: 300.ms, curve: Curves.easeOut).fadeIn();
+    ).animate().slideY(begin: 0.3, duration: 300.ms).fadeIn();
   }
 }
 
-// ── Input bar ────────────────────────────────────────────────────────────────
-
-class _InputBar extends StatefulWidget {
-  const _InputBar({
+class _ChatInput extends StatelessWidget {
+  const _ChatInput({
     required this.controller,
     required this.focusNode,
     required this.onSend,
-    required this.onScrollToBottom,
   });
-
   final TextEditingController controller;
   final FocusNode focusNode;
   final VoidCallback onSend;
-  final VoidCallback onScrollToBottom;
 
-  @override
-  State<_InputBar> createState() => _InputBarState();
-}
-
-class _InputBarState extends State<_InputBar> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ChatProvider>();
-    final isRecording = provider.isRecording;
-    final transcript = provider.liveTranscript;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
       decoration: const BoxDecoration(
-        color: kSurface,
         border: Border(top: BorderSide(color: kBorder)),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
         children: [
-          // Live transcript preview while recording
-          if (isRecording && transcript.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              margin: const EdgeInsets.only(bottom: 10),
-              decoration: BoxDecoration(
-                color: kPrimary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: kPrimary.withOpacity(0.3)),
-              ),
-              child: Text(
-                transcript,
-                style: const TextStyle(color: kPrimaryLight, fontSize: 13),
-              ),
-            ).animate().fadeIn(duration: 200.ms),
-
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // Voice button
-              VoiceButton(
-                isRecording: isRecording,
-                isDisabled: provider.isThinking,
-                onTap: () {
-                  if (isRecording) {
-                    provider.stopRecordingAndSend();
-                  } else {
-                    provider.startRecording();
-                  }
-                  widget.onScrollToBottom();
-                },
-              ),
-              const SizedBox(width: 12),
-              // Text field
-              Expanded(
-                child: TextField(
-                  controller: widget.controller,
-                  focusNode: widget.focusNode,
-                  enabled: !provider.isThinking && !isRecording,
-                  maxLines: 5,
-                  minLines: 1,
-                  textInputAction: TextInputAction.newline,
-                  style: const TextStyle(color: kTextPrimary, fontSize: 14),
-                  decoration: InputDecoration(
-                    hintText: isRecording
-                        ? 'Listening…'
-                        : provider.isThinking
-                            ? 'PAI is thinking…'
-                            : 'Send a command…',
-                  ),
-                  onSubmitted: (_) => widget.onSend(),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              focusNode: focusNode,
+              enabled: !provider.isThinking && !provider.isTranscribing,
+              maxLines: 3,
+              minLines: 1,
+              style: const TextStyle(color: kTextPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: provider.isTranscribing
+                    ? 'Transcribing…'
+                    : 'ask pai anything... /cmds',
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: kBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: kBorder),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: kAccent, width: 1.5),
                 ),
               ),
-              const SizedBox(width: 12),
-              // Send button
-              _SendButton(
-                enabled: !provider.isThinking && !isRecording,
-                onTap: widget.onSend,
+              onSubmitted: (_) => onSend(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onSend,
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: const LinearGradient(
+                  colors: [kPrimary, Color(0xFF5B21B6)],
+                ),
               ),
-            ],
+              child: const Icon(Icons.send_rounded,
+                  color: Colors.white, size: 18),
+            ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _SendButton extends StatelessWidget {
-  const _SendButton({required this.enabled, required this.onTap});
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: enabled
-              ? const LinearGradient(
-                  colors: [kPrimary, Color(0xFF5B21B6)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
-          color: enabled ? null : kSurfaceVar,
-        ),
-        child: Icon(
-          Icons.arrow_upward_rounded,
-          color: enabled ? Colors.white : kTextMuted,
-          size: 20,
-        ),
       ),
     );
   }

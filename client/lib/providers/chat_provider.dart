@@ -7,6 +7,8 @@ import '../services/api_service.dart';
 import '../services/stt_service.dart';
 import '../services/tts_service.dart';
 
+enum VoiceState { idle, recording, transcribing }
+
 class ChatProvider extends ChangeNotifier {
   ChatProvider({
     required ApiService apiService,
@@ -29,8 +31,8 @@ class ChatProvider extends ChangeNotifier {
 
   final List<ChatMessage> _messages = [];
   bool _isThinking = false;
-  bool _isRecording = false;
-  String _liveTranscript = '';
+  VoiceState _voiceState = VoiceState.idle;
+  String? _transcribedText; // text to put into the input box
   late bool _ttsEnabled;
   late bool _isConfigured;
   String? _pendingConfirmationId;
@@ -41,8 +43,10 @@ class ChatProvider extends ChangeNotifier {
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   bool get isThinking => _isThinking;
-  bool get isRecording => _isRecording;
-  String get liveTranscript => _liveTranscript;
+  VoiceState get voiceState => _voiceState;
+  bool get isRecording => _voiceState == VoiceState.recording;
+  bool get isTranscribing => _voiceState == VoiceState.transcribing;
+  String? get transcribedText => _transcribedText;
   bool get ttsEnabled => _ttsEnabled;
   bool get isConfigured => _isConfigured;
   String? get statusError => _statusError;
@@ -82,6 +86,11 @@ class ChatProvider extends ChangeNotifier {
     _prefs.setBool('pai_tts_enabled', value);
     if (!value) _tts.stop();
     notifyListeners();
+  }
+
+  /// Clear the transcribed text after the UI has consumed it.
+  void consumeTranscribedText() {
+    _transcribedText = null;
   }
 
   // ── Send command ──────────────────────────────────────────────────────────
@@ -160,49 +169,87 @@ class ChatProvider extends ChangeNotifier {
 
   // ── Voice ─────────────────────────────────────────────────────────────────
 
-  Future<void> startRecording() async {
-    if (_isRecording || _isThinking) return;
-    _isRecording = true;
-    _liveTranscript = 'Listening…';
-    notifyListeners();
-
-    await _stt.startListening(
-      onResult: (text, isFinal) {
-        // Groq STT doesn't stream — this callback isn't used in the new flow
-      },
-    );
-  }
-
-  Future<void> stopRecordingAndSend() async {
-    if (!_isRecording) return;
-    _liveTranscript = 'Transcribing…';
-    notifyListeners();
-
-    final transcript = await _stt.stopListeningAndTranscribe();
-    _isRecording = false;
-    _liveTranscript = '';
-    notifyListeners();
-
-    if (transcript != null && transcript.trim().isNotEmpty) {
-      await sendCommand(transcript);
+  /// Toggle recording: start if idle, stop+transcribe if recording.
+  Future<void> toggleRecording() async {
+    if (_voiceState == VoiceState.recording) {
+      await _stopAndTranscribe();
+    } else if (_voiceState == VoiceState.idle) {
+      _startRecording();
     }
   }
 
-  Future<void> cancelRecording() async {
-    await _stt.cancel();
-    _isRecording = false;
-    _liveTranscript = '';
+  void _startRecording() {
+    final ok = _stt.startRecording();
+    if (ok) {
+      _voiceState = VoiceState.recording;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _stopAndTranscribe() async {
+    _voiceState = VoiceState.transcribing;
+    notifyListeners();
+
+    final text = await _stt.stopAndTranscribe();
+
+    _voiceState = VoiceState.idle;
+    if (text != null && text.trim().isNotEmpty) {
+      _transcribedText = text.trim();
+    }
+    notifyListeners();
+  }
+
+  void cancelRecording() {
+    _stt.cancelRecording();
+    _voiceState = VoiceState.idle;
     notifyListeners();
   }
 
   // ── History ───────────────────────────────────────────────────────────────
 
-  Future<void> loadHistory() async {
-    final history = await _api.loadHistory();
-    if (history.isEmpty) return;
-    _messages.clear();
-    _messages.addAll(history);
-    notifyListeners();
+  /// Fetch list of past sessions (for Chat History panel).
+  Future<List<Map<String, dynamic>>> fetchSessions() async {
+    try {
+      return await _api.fetchSessions();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Fetch messages for a specific session (for viewing in history).
+  Future<List<ChatMessage>> fetchSessionMessages(String sessionId) async {
+    try {
+      return await _api.fetchSessionMessages(sessionId);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Load a specific session's messages into the chat view.
+  Future<int> loadSessionById(String sessionId) async {
+    try {
+      final messages = await _api.fetchSessionMessages(sessionId);
+      if (messages.isEmpty) return 0;
+      _messages.clear();
+      _messages.addAll(messages);
+      notifyListeners();
+      return messages.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<int> loadHistory() async {
+    try {
+      final history = await _api.loadHistory();
+      if (history.isEmpty) return 0;
+      _messages.clear();
+      _messages.addAll(history);
+      notifyListeners();
+      return history.length;
+    } catch (_) {
+      return 0;
+    }
   }
 
   void clearChat() {

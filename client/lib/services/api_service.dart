@@ -100,6 +100,36 @@ class ApiService {
     }
   }
 
+  /// Fetch a list of past sessions with summaries.
+  Future<List<Map<String, dynamic>>> fetchSessions({int limit = 30}) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/chat/sessions?limit=$limit');
+      final response =
+          await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final raw = data['sessions'] as List<dynamic>? ?? [];
+      return raw.cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Fetch messages for a specific session by ID.
+  Future<List<ChatMessage>> fetchSessionMessages(String sessionId, {int limit = 100}) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/chat/session/$sessionId/messages?limit=$limit');
+      final response =
+          await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final raw = data['messages'] as List<dynamic>? ?? [];
+      return raw.map((m) => ChatMessage.fromApi(m as Map<String, dynamic>)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   // ── Confirmation ──────────────────────────────────────────────────────────
 
   Future<bool> confirmAction(String pendingId) async {
