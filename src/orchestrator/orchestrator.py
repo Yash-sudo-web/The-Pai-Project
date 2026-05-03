@@ -361,6 +361,12 @@ class Orchestrator:
         if self._chat_client is not None and results:
             summary_message = await self._chat_client.generate_tool_summary_response(command, results)
 
+        # Log the command and its summary to the session history so it appears in the UI
+        if self._chat_client is not None:
+            # We don't have user_id here directly, but the default is 'default_user'
+            # which matches what the rest of the system uses currently.
+            await self._chat_client.log_tool_interaction(command, summary_message)
+
         return OrchestratorResponse(
             success=True,
             message=summary_message,

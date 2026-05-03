@@ -201,3 +201,11 @@ class ChatClient:
             pass # Fall back below if LLM fails
             
         return "Task completed successfully."
+
+    @traceable_if_available("chat.log_tool_interaction")
+    async def log_tool_interaction(self, command: str, summary: str, user_id: str = "default_user") -> None:
+        """Persist a tool command and its summary to the session history."""
+        if self._session_manager is not None:
+            session = await self._session_manager.get_or_create_session(user_id)
+            self._session_manager.add_message(session.id, "user", command)
+            self._session_manager.add_message(session.id, "assistant", summary)
