@@ -2,22 +2,27 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:record/record.dart';
 
 import 'win_recorder.dart';
 
 /// STT via Groq Whisper API (whisper-large-v3-turbo).
 ///
-/// Records audio using [WinRecorder] (direct FFI to winmm.dll),
-/// then sends the WAV file to Groq for transcription.
+/// Records audio using [WinRecorder] on Windows (direct FFI to winmm.dll),
+/// and the `record` package on iOS/Android, then sends the WAV to Groq.
 class SttService {
   String _apiKey = '';
   String _baseUrl = 'https://api.groq.com/openai/v1';
   String _model = 'whisper-large-v3-turbo';
 
-  final WinRecorder _recorder = WinRecorder();
+  final WinRecorder _winRecorder = WinRecorder();
+  final AudioRecorder _mobileRecorder = AudioRecorder();
+  String? _mobilePath;
+  bool _isMobileRecording = false;
+
   String? _unavailableReason;
 
-  bool get isListening => _recorder.isRecording;
+  bool get isListening => Platform.isWindows ? _winRecorder.isRecording : _isMobileRecording;
   String? get unavailableReason => _unavailableReason;
 
   void configure({required String groqApiKey, String? baseUrl}) {
@@ -31,27 +36,58 @@ class SttService {
       _unavailableReason = 'Groq API key not configured — set it in Settings.';
       return false;
     }
-    if (!Platform.isWindows) {
-      _unavailableReason = 'Voice recording requires Windows.';
+    if (!Platform.isWindows && !Platform.isIOS && !Platform.isAndroid) {
+      _unavailableReason = 'Voice recording requires Windows, iOS, or Android.';
       return false;
+    }
+    
+    // Request permission on mobile
+    if (Platform.isIOS || Platform.isAndroid) {
+      if (!await _mobileRecorder.hasPermission()) {
+        _unavailableReason = 'Microphone permission denied.';
+        return false;
+      }
     }
     return true;
   }
 
   /// Start recording from the microphone.
-  bool startRecording() {
-    if (_apiKey.isEmpty || !Platform.isWindows) return false;
-    final ok = _recorder.start();
-    if (!ok) {
-      _unavailableReason = 'Failed to open microphone.';
+  Future<bool> startRecording() async {
+    if (_apiKey.isEmpty) return false;
+    
+    if (Platform.isWindows) {
+      final ok = _winRecorder.start();
+      if (!ok) _unavailableReason = 'Failed to open microphone on Windows.';
+      return ok;
+    } else {
+      try {
+        final tempDir = Directory.systemTemp;
+        _mobilePath = '${tempDir.path}/pai_mobile_${DateTime.now().millisecondsSinceEpoch}.wav';
+        await _mobileRecorder.start(
+          const RecordConfig(encoder: AudioEncoder.wav),
+          path: _mobilePath!,
+        );
+        _isMobileRecording = true;
+        return true;
+      } catch (e) {
+        _unavailableReason = 'Failed to start mobile recording: $e';
+        return false;
+      }
     }
-    return ok;
   }
 
   /// Stop recording and transcribe via Groq Whisper.
   /// Returns the transcribed text, or null on failure.
   Future<String?> stopAndTranscribe() async {
-    final path = _recorder.stop();
+    String? path;
+    
+    if (Platform.isWindows) {
+      path = _winRecorder.stop();
+    } else {
+      path = await _mobileRecorder.stop();
+      _isMobileRecording = false;
+    }
+
     if (path == null) return null;
 
     final file = File(path);
@@ -102,11 +138,20 @@ class SttService {
     }
   }
 
-  void cancelRecording() {
-    _recorder.cancel();
+  void cancelRecording() async {
+    if (Platform.isWindows) {
+      _winRecorder.cancel();
+    } else {
+      await _mobileRecorder.stop();
+      _isMobileRecording = false;
+      if (_mobilePath != null) {
+        try { await File(_mobilePath!).delete(); } catch (_) {}
+      }
+    }
   }
 
   void dispose() {
-    if (_recorder.isRecording) _recorder.cancel();
+    cancelRecording();
+    _mobileRecorder.dispose();
   }
 }

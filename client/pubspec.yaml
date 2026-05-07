@@ -15,6 +15,7 @@ dependencies:
   # Voice — Groq API for STT/TTS
   audioplayers: ^6.1.0
   ffi: ^2.1.0
+  record: ^5.1.2
   # State
   provider: ^6.1.2
   # Storage

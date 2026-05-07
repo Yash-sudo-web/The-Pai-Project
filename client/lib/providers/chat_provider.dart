@@ -174,12 +174,12 @@ class ChatProvider extends ChangeNotifier {
     if (_voiceState == VoiceState.recording) {
       await _stopAndTranscribe();
     } else if (_voiceState == VoiceState.idle) {
-      _startRecording();
+      await _startRecording();
     }
   }
 
-  void _startRecording() {
-    final ok = _stt.startRecording();
+  Future<void> _startRecording() async {
+    final ok = await _stt.startRecording();
     if (ok) {
       _voiceState = VoiceState.recording;
       notifyListeners();

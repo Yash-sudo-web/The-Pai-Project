@@ -90,31 +90,61 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDesktop = MediaQuery.of(context).size.width >= 800;
+
     return Scaffold(
       backgroundColor: kBg,
-      body: Row(
-        children: [
-          // ── Left Sidebar ──────────────────────────────────────────────
-          _LeftSidebar(onSettingsTap: _openSettings),
-
-          // ── Center: Mic & Greeting ────────────────────────────────────
-          Expanded(
-            flex: 3,
-            child: _CenterArea(greeting: _greeting()),
-          ),
-
-          // ── Right: Chat Panel ─────────────────────────────────────────
-          SizedBox(
-            width: 360,
-            child: _ChatPanel(
-              inputController: _inputController,
-              scrollController: _scrollController,
-              focusNode: _focusNode,
-              onSend: _send,
+      drawer: isDesktop ? null : Drawer(child: _LeftSidebar(onSettingsTap: _openSettings)),
+      appBar: isDesktop
+          ? null
+          : AppBar(
+              backgroundColor: kSurface,
+              iconTheme: const IconThemeData(color: kTextPrimary),
+              title: Text(_greeting(), style: const TextStyle(color: kTextPrimary, fontSize: 16)),
+              elevation: 0,
             ),
-          ),
-        ],
-      ),
+      body: isDesktop
+          ? Row(
+              children: [
+                // ── Left Sidebar ──────────────────────────────────────────────
+                _LeftSidebar(onSettingsTap: _openSettings),
+
+                // ── Center: Mic & Greeting ────────────────────────────────────
+                Expanded(
+                  flex: 3,
+                  child: _CenterArea(greeting: _greeting()),
+                ),
+
+                // ── Right: Chat Panel ─────────────────────────────────────────
+                SizedBox(
+                  width: 360,
+                  child: _ChatPanel(
+                    inputController: _inputController,
+                    scrollController: _scrollController,
+                    focusNode: _focusNode,
+                    onSend: _send,
+                  ),
+                ),
+              ],
+            )
+          : Stack(
+              children: [
+                _ChatPanel(
+                  inputController: _inputController,
+                  scrollController: _scrollController,
+                  focusNode: _focusNode,
+                  onSend: _send,
+                ),
+                Positioned(
+                  bottom: 85,
+                  right: 16,
+                  child: Transform.scale(
+                    scale: 0.6,
+                    child: const _MicButton(),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
