@@ -7,15 +7,37 @@ import 'package:ffi/ffi.dart';
 ///
 /// This runs in-process — no PowerShell, no subprocesses, no alias
 /// scoping issues. Works on every Windows 10/11 machine.
+///
+/// On non-Windows platforms, all methods are safe no-ops.
 class WinRecorder {
-  static final DynamicLibrary _winmm = DynamicLibrary.open('winmm.dll');
+  static DynamicLibrary? _winmm;
+  static bool _initialized = false;
 
-  static final int Function(Pointer<Utf8>, Pointer<Utf8>, int, int)
-      _mciSendString = _winmm.lookupFunction<
-          Uint32 Function(Pointer<Utf8>, Pointer<Utf8>, Uint32, IntPtr),
-          int Function(Pointer<Utf8>, Pointer<Utf8>, int, int)>(
-    'mciSendStringA',
-  );
+  static DynamicLibrary? _getWinmm() {
+    if (!_initialized) {
+      _initialized = true;
+      if (Platform.isWindows) {
+        try {
+          _winmm = DynamicLibrary.open('winmm.dll');
+        } catch (_) {}
+      }
+    }
+    return _winmm;
+  }
+
+  static int Function(Pointer<Utf8>, Pointer<Utf8>, int, int)? _mciSendStringFn;
+
+  static int Function(Pointer<Utf8>, Pointer<Utf8>, int, int)? _getMciSendString() {
+    if (_mciSendStringFn != null) return _mciSendStringFn;
+    final lib = _getWinmm();
+    if (lib == null) return null;
+    _mciSendStringFn = lib.lookupFunction<
+        Uint32 Function(Pointer<Utf8>, Pointer<Utf8>, Uint32, IntPtr),
+        int Function(Pointer<Utf8>, Pointer<Utf8>, int, int)>(
+      'mciSendStringA',
+    );
+    return _mciSendStringFn;
+  }
 
   bool _recording = false;
   String? _outputPath;
@@ -24,9 +46,11 @@ class WinRecorder {
 
   /// Send an MCI command string. Returns 0 on success.
   static int _mci(String command) {
+    final fn = _getMciSendString();
+    if (fn == null) return -1;
     final cmd = command.toNativeUtf8();
     try {
-      return _mciSendString(cmd, nullptr, 0, 0);
+      return fn(cmd, nullptr, 0, 0);
     } finally {
       malloc.free(cmd);
     }
@@ -35,6 +59,7 @@ class WinRecorder {
   /// Start recording from the default microphone.
   /// Returns true if recording started successfully.
   bool start() {
+    if (!Platform.isWindows) return false;
     if (_recording) return true;
 
     final tempDir = Directory.systemTemp;
