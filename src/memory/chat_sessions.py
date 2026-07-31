@@ -8,19 +8,20 @@ into new conversations so the AI remembers cross-day interactions.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from typing import Iterable, Optional, Sequence
 
-from sqlalchemy.orm import Session
-
+from src.context import DEFAULT_USER_ID, LOCAL_TZ
 from src.memory.db import ChatMessage, ChatSession, SessionLocal
 
 logger = logging.getLogger(__name__)
 
-# IST = UTC + 5:30
-IST = timezone(timedelta(hours=5, minutes=30))
+# Kept as a module-level alias for existing callers.
+IST = LOCAL_TZ
 
 # Maximum number of today's messages to include in the LLM context window
 DEFAULT_CONTEXT_MESSAGE_LIMIT = 50
@@ -28,10 +29,46 @@ DEFAULT_CONTEXT_MESSAGE_LIMIT = 50
 # Number of past daily summaries to inject as context
 DEFAULT_SUMMARY_DAYS = 7
 
+# Context is capped by size, not just message count: a busy day used to push
+# several thousand tokens of history into every single turn.
+DEFAULT_HISTORY_TOKEN_BUDGET = 1500
+DEFAULT_SUMMARY_TOKEN_BUDGET = 800
 
-def _today_ist() -> datetime:
+# Rough tokens-per-character ratio for English prose. Good enough for
+# budgeting; the cost of being slightly off is a few hundred tokens.
+_CHARS_PER_TOKEN = 4
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // _CHARS_PER_TOKEN)
+
+
+def _today_ist() -> date:
     """Return the current date in IST as a date object."""
     return datetime.now(IST).date()
+
+
+@dataclass(frozen=True)
+class SessionInfo:
+    """Plain snapshot of a chat session — safe to use outside a DB session."""
+
+    id: str
+    user_id: str
+    session_date: date
+    status: str
+    summary: str | None
+    message_count: int
+
+
+def _to_info(session: ChatSession) -> SessionInfo:
+    return SessionInfo(
+        id=session.id,
+        user_id=session.user_id,
+        session_date=session.session_date,
+        status=session.status,
+        summary=session.summary,
+        message_count=session.message_count or 0,
+    )
 
 
 class ChatSessionManager:
@@ -49,6 +86,10 @@ class ChatSessionManager:
         Max messages from today's session to include in the context window.
     summary_days:
         Number of past daily summaries to inject as cross-day context.
+    history_token_budget:
+        Approximate token ceiling for injected same-day history.
+    summary_token_budget:
+        Approximate token ceiling for injected cross-day summaries.
     """
 
     def __init__(
@@ -57,58 +98,79 @@ class ChatSessionManager:
         llm_summariser=None,
         context_message_limit: int = DEFAULT_CONTEXT_MESSAGE_LIMIT,
         summary_days: int = DEFAULT_SUMMARY_DAYS,
+        history_token_budget: int = DEFAULT_HISTORY_TOKEN_BUDGET,
+        summary_token_budget: int = DEFAULT_SUMMARY_TOKEN_BUDGET,
     ) -> None:
         self._session_factory = session_factory
         self._llm_summariser = llm_summariser
         self._context_message_limit = context_message_limit
         self._summary_days = summary_days
+        self._history_token_budget = history_token_budget
+        self._summary_token_budget = summary_token_budget
 
     # ------------------------------------------------------------------
     # Session lifecycle
     # ------------------------------------------------------------------
 
-    async def get_or_create_session(self, user_id: str = "default_user") -> ChatSession:
+    async def get_or_create_session(self, user_id: str = DEFAULT_USER_ID) -> SessionInfo:
         """Return today's active session, creating it if necessary.
 
         If the most recent session belongs to a previous day, it is
         closed and summarised before the new session is created.
-        """
-        today = _today_ist()
 
+        Every query runs off the event loop: SQLAlchemy's sync API would
+        otherwise stall the whole server (and any in-flight SSE stream) for
+        the duration of each remote round trip.
+        """
+        existing = await asyncio.to_thread(self._fetch_today_session, user_id)
+        if existing is not None:
+            return existing
+
+        # New day: close and summarise anything still open before starting.
+        stale_ids = await asyncio.to_thread(self._fetch_stale_session_ids, user_id)
+        for session_id in stale_ids:
+            await self._close_session(session_id)
+
+        return await asyncio.to_thread(self._create_today_session, user_id)
+
+    def _fetch_today_session(self, user_id: str) -> SessionInfo | None:
+        today = _today_ist()
         with self._session_factory() as db:
-            # Look for today's session first
             session = (
                 db.query(ChatSession)
                 .filter(ChatSession.user_id == user_id, ChatSession.session_date == today)
                 .first()
             )
-            if session is not None:
-                # Reactivate if somehow closed mid-day
-                if session.status == "closed":
-                    session.status = "active"
-                    session.closed_at = None
-                    db.commit()
-                    db.refresh(session)
-                return self._detach(session)
+            if session is None:
+                return None
+            # Reactivate if somehow closed mid-day
+            if session.status == "closed":
+                session.status = "active"
+                session.closed_at = None
+                db.commit()
+                db.refresh(session)
+            return _to_info(session)
 
-            # Close any previous active sessions for this user
-            previous_sessions = (
-                db.query(ChatSession)
+    def _fetch_stale_session_ids(self, user_id: str) -> list[str]:
+        today = _today_ist()
+        with self._session_factory() as db:
+            return [
+                row.id
+                for row in db.query(ChatSession)
                 .filter(
                     ChatSession.user_id == user_id,
                     ChatSession.status == "active",
                     ChatSession.session_date < today,
                 )
                 .all()
-            )
-            for prev in previous_sessions:
-                await self._close_session(db, prev)
+            ]
 
-            # Create today's session
+    def _create_today_session(self, user_id: str) -> SessionInfo:
+        with self._session_factory() as db:
             new_session = ChatSession(
                 id=str(uuid.uuid4()),
                 user_id=user_id,
-                session_date=today,
+                session_date=_today_ist(),
                 status="active",
                 message_count=0,
                 created_at=datetime.now(IST),
@@ -116,62 +178,94 @@ class ChatSessionManager:
             db.add(new_session)
             db.commit()
             db.refresh(new_session)
-            return self._detach(new_session)
+            return _to_info(new_session)
 
-    async def _close_session(self, db: Session, session: ChatSession) -> None:
+    def get_session(self, session_id: str, user_id: str | None = None) -> SessionInfo | None:
+        """Return a session by id, optionally asserting it belongs to *user_id*."""
+        with self._session_factory() as db:
+            query = db.query(ChatSession).filter(ChatSession.id == session_id)
+            if user_id is not None:
+                query = query.filter(ChatSession.user_id == user_id)
+            session = query.first()
+            return _to_info(session) if session is not None else None
+
+    async def _close_session(self, session_id: str) -> None:
         """Close a session and generate its summary."""
-        session.status = "closed"
-        session.closed_at = datetime.now(IST)
+        transcript = await asyncio.to_thread(self._fetch_transcript, session_id)
 
-        # Generate summary if we have an LLM summariser and messages
-        if self._llm_summariser is not None and session.message_count > 0:
+        summary: str | None = None
+        if self._llm_summariser is not None and transcript:
             try:
-                messages = (
-                    db.query(ChatMessage)
-                    .filter(ChatMessage.session_id == session.id)
-                    .order_by(ChatMessage.created_at.asc())
-                    .all()
-                )
-                msg_dicts = [{"role": m.role, "content": m.content} for m in messages]
-                summary = await self._llm_summariser(msg_dicts)
+                summary = await self._llm_summariser(transcript)
+            except Exception:
+                logger.exception("Failed to summarise session %s", session_id)
+
+        await asyncio.to_thread(self._mark_closed, session_id, summary)
+
+    def _fetch_transcript(self, session_id: str) -> list[dict]:
+        with self._session_factory() as db:
+            messages = (
+                db.query(ChatMessage)
+                .filter(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.created_at.asc())
+                .all()
+            )
+            return [{"role": m.role, "content": m.content} for m in messages]
+
+    def _mark_closed(self, session_id: str, summary: str | None) -> None:
+        with self._session_factory() as db:
+            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if session is None:
+                return
+            session.status = "closed"
+            session.closed_at = datetime.now(IST)
+            if summary:
                 session.summary = summary
                 logger.info(
                     "Generated summary for session %s (date=%s): %d chars",
-                    session.id,
+                    session_id,
                     session.session_date,
                     len(summary),
                 )
-            except Exception:
-                logger.exception("Failed to summarise session %s", session.id)
-
-        db.commit()
+            db.commit()
 
     # ------------------------------------------------------------------
     # Message persistence
     # ------------------------------------------------------------------
 
-    def add_message(
-        self, session_id: str, role: str, content: str
-    ) -> ChatMessage:
-        """Persist a message and increment the session's message_count."""
-        with self._session_factory() as db:
-            message = ChatMessage(
-                id=str(uuid.uuid4()),
-                session_id=session_id,
-                role=role,
-                content=content,
-                created_at=datetime.now(IST),
-            )
-            db.add(message)
+    def add_message(self, session_id: str, role: str, content: str) -> None:
+        """Persist a single message. Prefer :meth:`add_messages` for a turn."""
+        self.add_messages(session_id, [(role, content)])
 
-            # Increment message count
+    def add_messages(self, session_id: str, turns: Sequence[tuple[str, str]]) -> None:
+        """Persist several messages and bump ``message_count`` in one transaction.
+
+        A user/assistant turn used to cost two separate SELECT + UPDATE +
+        INSERT + COMMIT cycles against a remote database; this collapses them
+        into a single round trip.
+        """
+        if not turns:
+            return
+
+        now = datetime.now(IST)
+        with self._session_factory() as db:
+            db.add_all(
+                ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=session_id,
+                    role=role,
+                    content=content,
+                    # Preserve ordering when several rows land in the same tick.
+                    created_at=now + timedelta(microseconds=index),
+                )
+                for index, (role, content) in enumerate(turns)
+            )
+
             session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
             if session is not None:
-                session.message_count = (session.message_count or 0) + 1
+                session.message_count = (session.message_count or 0) + len(turns)
 
             db.commit()
-            db.refresh(message)
-            return self._detach(message)
 
     # ------------------------------------------------------------------
     # Retrieval
@@ -193,13 +287,13 @@ class ChatSessionManager:
         limit = limit or self._context_message_limit
 
         with self._session_factory() as db:
-            query = (
+            messages = (
                 db.query(ChatMessage)
                 .filter(ChatMessage.session_id == session_id)
                 .order_by(ChatMessage.created_at.desc())
                 .limit(limit)
+                .all()
             )
-            messages = query.all()
             # Reverse so oldest-first for LLM context
             messages.reverse()
             return [
@@ -213,7 +307,7 @@ class ChatSessionManager:
             ]
 
     def get_recent_summaries(
-        self, user_id: str = "default_user", days: Optional[int] = None
+        self, user_id: str = DEFAULT_USER_ID, days: Optional[int] = None
     ) -> list[dict]:
         """Return summaries from the last N days (excluding today).
 
@@ -245,7 +339,7 @@ class ChatSessionManager:
             ]
 
     def get_sessions_list(
-        self, user_id: str = "default_user", limit: int = 30
+        self, user_id: str = DEFAULT_USER_ID, limit: int = 30
     ) -> list[dict]:
         """Return a list of past sessions with metadata."""
         with self._session_factory() as db:
@@ -304,55 +398,82 @@ class ChatSessionManager:
     # Context builder (for LLM injection)
     # ------------------------------------------------------------------
 
-    async def build_context_messages(
-        self, user_id: str = "default_user"
+    def build_context_messages(
+        self, user_id: str = DEFAULT_USER_ID, session_id: str | None = None
     ) -> list[dict]:
         """Build the context messages to inject before a new user message.
 
-        Returns a list of ``{"role": "system", "content": "..."}`` dicts
-        containing:
-        1. Summaries of recent past sessions.
-        2. Today's conversation history so far.
+        Both sections are trimmed newest-first to a token budget, so an
+        all-day conversation cannot grow the per-turn prompt without bound.
+
+        Parameters
+        ----------
+        user_id:
+            Owner of the conversation.
+        session_id:
+            Today's session id. Callers that already resolved it should pass
+            it in; re-resolving costs an extra database round trip.
         """
         context: list[dict] = []
 
-        # 1. Past session summaries
-        summaries = self.get_recent_summaries(user_id)
-        if summaries:
-            summary_text = "\n".join(
-                f"• {s['date']}: {s['summary']}" for s in summaries
+        summary_text = self._trim_summaries(self.get_recent_summaries(user_id))
+        if summary_text:
+            context.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Summary of recent conversations with the user from past days. "
+                        "Use for context; do not repeat unless asked:\n\n" + summary_text
+                    ),
+                }
             )
-            context.append({
-                "role": "system",
-                "content": (
-                    "Here is a summary of your recent conversations with the user "
-                    "from past days. Use this for context but do not repeat it "
-                    "unless asked:\n\n" + summary_text
-                ),
-            })
 
-        # 2. Today's messages
-        session = await self.get_or_create_session(user_id)
-        today_messages = self.get_messages(session.id)
-        for msg in today_messages:
-            context.append({"role": msg["role"], "content": msg["content"]})
+        if session_id is not None:
+            context.extend(self._trim_history(self.get_messages(session_id)))
 
         return context
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+    def _trim_summaries(self, summaries: Iterable[dict]) -> str:
+        """Join summaries newest-first until the token budget is spent."""
+        kept: list[str] = []
+        budget = self._summary_token_budget
+        for item in reversed(list(summaries)):
+            line = f"• {item['date']}: {item['summary']}"
+            cost = _estimate_tokens(line)
+            if cost > budget:
+                break
+            budget -= cost
+            kept.append(line)
+        kept.reverse()
+        return "\n".join(kept)
 
-    @staticmethod
-    def _detach(obj):
-        """Expunge an ORM object from its session so it can be used outside."""
-        from sqlalchemy.orm import make_transient
+    def _trim_history(self, messages: Sequence[dict]) -> list[dict]:
+        """Keep the most recent messages that fit the history token budget.
 
-        try:
-            session = obj._sa_instance_state.session
-            if session is not None:
-                session.expunge(obj)
-            make_transient(obj)
-        except Exception:
-            pass
-        return obj
+        Trimming stops at the first message that does not fit rather than
+        skipping it, so the retained history stays contiguous.
+        """
+        kept: list[dict] = []
+        budget = self._history_token_budget
+        for message in reversed(messages):
+            content = message.get("content") or ""
+            cost = _estimate_tokens(content)
+            if cost > budget:
+                break
+            budget -= cost
+            kept.append({"role": message["role"], "content": content})
+
+        if not kept and messages:
+            # A single oversized message must not wipe the whole window —
+            # keep the latest turn, truncated to the budget.
+            latest = messages[-1]
+            limit = self._history_token_budget * _CHARS_PER_TOKEN
+            kept.append(
+                {
+                    "role": latest["role"],
+                    "content": (latest.get("content") or "")[:limit] + " …[truncated]",
+                }
+            )
+
+        kept.reverse()
+        return kept

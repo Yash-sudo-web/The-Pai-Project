@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/chat_provider.dart';
 
 class SettingsDialog extends StatefulWidget {
@@ -44,10 +45,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
     if (url.isEmpty || !url.startsWith('http')) {
       setState(() => _saveError = 'Enter a valid URL (starts with https://)');
-      return;
-    }
-    if (key.isEmpty) {
-      setState(() => _saveError = 'API key cannot be empty');
       return;
     }
 
@@ -131,8 +128,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               const SizedBox(height: 16),
 
-              // API Key
-              const _Label('API Key'),
+              // Session
+              const _Label('Session'),
+              const SizedBox(height: 6),
+              const _SessionRow(),
+              const SizedBox(height: 16),
+
+              // API Key — only needed for scripts/curl now that the app
+              // signs in with a password.
+              const _Label('API Key (optional)'),
               const SizedBox(height: 6),
               TextField(
                 controller: _keyController,
@@ -140,7 +144,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 style:
                     const TextStyle(color: kTextPrimary, fontSize: 14),
                 decoration: InputDecoration(
-                  hintText: 'your_api_key',
+                  hintText: 'only for scripts — leave blank',
                   prefixIcon: const Icon(Icons.key_rounded,
                       color: kTextMuted, size: 18),
                   suffixIcon: IconButton(
@@ -222,6 +226,71 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
       ),
     );
+  }
+}
+
+/// Shows how long the current session lasts, with a sign-out button.
+class _SessionRow extends StatelessWidget {
+  const _SessionRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final expiry = auth.sessionExpiry;
+    final signedInWithPassword = expiry != null;
+
+    final label = signedInWithPassword
+        ? 'Signed in — expires ${_relative(expiry)}'
+        : 'Using an API key (no session)';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: kSurfaceVar,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            signedInWithPassword
+                ? Icons.verified_user_rounded
+                : Icons.key_rounded,
+            color: signedInWithPassword ? kSuccess : kTextMuted,
+            size: 16,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: kTextSecondary, fontSize: 12),
+            ),
+          ),
+          if (signedInWithPassword)
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await context.read<AuthProvider>().signOut();
+              },
+              style: TextButton.styleFrom(
+                foregroundColor: kError,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Sign out', style: TextStyle(fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static String _relative(DateTime when) {
+    final days = when.difference(DateTime.now()).inDays;
+    if (days < 0) return 'now';
+    if (days == 0) return 'today';
+    if (days == 1) return 'tomorrow';
+    return 'in $days days';
   }
 }
 

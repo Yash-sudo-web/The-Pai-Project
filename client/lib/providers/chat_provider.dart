@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config.dart';
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
+import '../services/message_cache.dart';
 import '../services/stt_service.dart';
 import '../services/tts_service.dart';
 
@@ -15,12 +16,16 @@ class ChatProvider extends ChangeNotifier {
     required SttService sttService,
     required TtsService ttsService,
     required SharedPreferences prefs,
+    Future<void> Function()? onUnauthorized,
   })  : _api = apiService,
         _stt = sttService,
         _tts = ttsService,
-        _prefs = prefs {
+        _prefs = prefs,
+        _onUnauthorized = onUnauthorized {
     _ttsEnabled = prefs.getBool('pai_tts_enabled') ?? true;
-    _isConfigured = AppConfig.isConfigured(prefs);
+    _cache = MessageCache(prefs);
+    // Paint the last known conversation before the network is even touched.
+    _messages.addAll(_cache.load());
     _configureVoiceServices();
   }
 
@@ -29,15 +34,20 @@ class ChatProvider extends ChangeNotifier {
   final TtsService _tts;
   final SharedPreferences _prefs;
 
+  /// Invoked when the server rejects our credential, so the app can sign out.
+  final Future<void> Function()? _onUnauthorized;
+
+  late final MessageCache _cache;
+
   final List<ChatMessage> _messages = [];
   bool _isThinking = false;
   VoiceState _voiceState = VoiceState.idle;
   String? _transcribedText; // text to put into the input box
   late bool _ttsEnabled;
-  late bool _isConfigured;
   String? _pendingConfirmationId;
   String? _statusError;
   bool _isOnline = true;
+  String? _activeTool;
 
   // ── Getters ───────────────────────────────────────────────────────────────
 
@@ -48,10 +58,15 @@ class ChatProvider extends ChangeNotifier {
   bool get isTranscribing => _voiceState == VoiceState.transcribing;
   String? get transcribedText => _transcribedText;
   bool get ttsEnabled => _ttsEnabled;
-  bool get isConfigured => _isConfigured;
+  /// Read live: the credential can change after sign-in, so a snapshot taken
+  /// at construction would be stale.
+  bool get isConfigured => AppConfig.isConfigured(_prefs);
   String? get statusError => _statusError;
   bool get hasPendingConfirmation => _pendingConfirmationId != null;
   bool get isOnline => _isOnline;
+
+  /// Name of the tool currently executing, for the thinking indicator.
+  String? get activeTool => _activeTool;
 
   // ── Config ────────────────────────────────────────────────────────────────
 
@@ -75,7 +90,6 @@ class ChatProvider extends ChangeNotifier {
     await AppConfig.saveBaseUrl(_prefs, baseUrl);
     await AppConfig.saveApiKey(_prefs, apiKey);
     await AppConfig.saveGroqApiKey(_prefs, groqApiKey);
-    _isConfigured = AppConfig.isConfigured(_prefs);
     _statusError = null;
     _configureVoiceServices();
     notifyListeners();
@@ -107,23 +121,76 @@ class ChatProvider extends ChangeNotifier {
     ));
     _isThinking = true;
     _statusError = null;
+    _activeTool = null;
     notifyListeners();
 
-    try {
-      final result = await _api.sendCommand(trimmed);
-      _isOnline = true;
+    // Index of the assistant bubble being streamed into, or -1 before the
+    // first token arrives.
+    var streamIndex = -1;
+    final buffer = StringBuffer();
 
-      if (result.needsConfirmation && result.pendingId != null) {
-        _pendingConfirmationId = result.pendingId;
-        _addAssistant(
-          '⚠️ This action requires your confirmation — use the buttons below.',
-        );
-      } else {
-        _addAssistant(result.message, isError: !result.success);
+    try {
+      await for (final event in _api.sendCommandStream(trimmed)) {
+        _isOnline = true;
+        switch (event.type) {
+          case CommandEventType.token:
+            buffer.write(event.text ?? '');
+            if (streamIndex == -1) {
+              // First token: stop the spinner and open a bubble to grow.
+              _isThinking = false;
+              _activeTool = null;
+              _messages.add(ChatMessage(
+                id: ChatMessage.generateId(),
+                role: MessageRole.assistant,
+                text: buffer.toString(),
+                timestamp: DateTime.now(),
+              ));
+              streamIndex = _messages.length - 1;
+            } else {
+              _messages[streamIndex] =
+                  _messages[streamIndex].copyWith(text: buffer.toString());
+            }
+            notifyListeners();
+            break;
+
+          case CommandEventType.tool:
+            _activeTool = event.toolStatus == 'started' ? event.toolName : null;
+            notifyListeners();
+            break;
+
+          case CommandEventType.pendingConfirmation:
+            _pendingConfirmationId = event.pendingId;
+            _isThinking = false;
+            _addAssistant(
+              '⚠️ This action requires your confirmation — use the buttons below.',
+            );
+            notifyListeners();
+            break;
+
+          case CommandEventType.result:
+            final result = event.result;
+            if (result == null) break;
+            if (streamIndex == -1) {
+              _addAssistant(result.message, isError: !result.success);
+            } else {
+              // Reconcile with the authoritative final text.
+              _messages[streamIndex] = _messages[streamIndex]
+                  .copyWith(text: result.message, isError: !result.success);
+              if (_ttsEnabled && result.success) _tts.speak(result.message);
+            }
+            notifyListeners();
+            break;
+
+          case CommandEventType.error:
+            _addAssistant('Error: ${event.text ?? 'unknown'}', isError: true);
+            notifyListeners();
+            break;
+        }
       }
     } on ApiException catch (e) {
       if (e.statusCode == 401) {
-        _statusError = 'Auth failed — check Settings.';
+        _statusError = 'Session expired — sign in again.';
+        await _onUnauthorized?.call();
       }
       _addAssistant('Error: $e', isError: true);
       _isOnline = false;
@@ -132,7 +199,9 @@ class ChatProvider extends ChangeNotifier {
       _isOnline = false;
     } finally {
       _isThinking = false;
+      _activeTool = null;
       notifyListeners();
+      await _cache.save(_messages);
     }
   }
 
@@ -233,6 +302,7 @@ class ChatProvider extends ChangeNotifier {
       _messages.clear();
       _messages.addAll(messages);
       notifyListeners();
+      await _cache.save(_messages);
       return messages.length;
     } catch (_) {
       return 0;
@@ -242,20 +312,24 @@ class ChatProvider extends ChangeNotifier {
   Future<int> loadHistory() async {
     try {
       final history = await _api.loadHistory();
+      // Keep whatever the cache painted if the server has nothing — losing a
+      // visible conversation to an empty response is worse than a stale one.
       if (history.isEmpty) return 0;
       _messages.clear();
       _messages.addAll(history);
       notifyListeners();
+      await _cache.save(_messages);
       return history.length;
     } catch (_) {
       return 0;
     }
   }
 
-  void clearChat() {
+  Future<void> clearChat() async {
     _messages.clear();
     _tts.stop();
     _pendingConfirmationId = null;
     notifyListeners();
+    await _cache.clear();
   }
 }

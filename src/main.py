@@ -2,29 +2,34 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from src.config import AppConfig, app_config
 from src.domains.gym.tools import register_gym_tools
+from src.domains.memory.tools import register_memory_tools
 from src.domains.nutrition.tools import register_nutrition_tools
 from src.domains.productivity.tools import register_productivity_tools
-from src.domains.system_control.tools import register_system_control_tools
+from src.domains.review.tools import register_review_tools
 from src.memory.chat_sessions import ChatSessionManager
 from src.memory.db import SessionLocal, init_db
 from src.memory.retrieval import RetrievalLayer
 from src.memory.vector_store import VectorStore, VectorStoreUnavailableError
-from src.orchestrator.intent_parser import IntentParser
 from src.orchestrator.chat import ChatClient, _default_summariser
 from src.orchestrator.llm import LLMClient
 from src.orchestrator.orchestrator import Orchestrator
-from src.orchestrator.router import MessageRouter
+from src.remote.auth import AuthManager
 from src.safety.audit import AuditLog
 from src.safety.confirmation import ConfirmationLayer
 from src.safety.permissions import PermissionSystem
 from src.safety.rate_limiter import RateLimiter
 from src.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
+
+Profile = Literal["local", "serverless"]
 
 
 @dataclass
@@ -37,28 +42,60 @@ class ApplicationRuntime:
     tool_registry: ToolRegistry
     retrieval_layer: RetrievalLayer
     chat_session_manager: ChatSessionManager
-    intent_parser: IntentParser
+    llm_client: LLMClient
     orchestrator: Orchestrator
     auth_manager: AuthManager
     app: Any
 
 
-def _register_domain_tools(registry: ToolRegistry, disabled_domains: set[str]) -> None:
-    domain_registrars = {
+def _register_domain_tools(
+    registry: ToolRegistry,
+    disabled_domains: set[str],
+    profile: Profile,
+    audit_log: AuditLog | None = None,
+) -> None:
+    domain_registrars: dict[str, Any] = {
         "gym": register_gym_tools,
         "nutrition": register_nutrition_tools,
         "productivity": register_productivity_tools,
-        "system_control": register_system_control_tools,
+        # undo_last reads the audit log and calls other tools' rollback().
+        "memory": lambda reg: register_memory_tools(reg, audit_log=audit_log),
+        "review": register_review_tools,
     }
+
+    # system_control drives the local desktop via pyautogui/pynput, which
+    # cannot work — and must not be exposed — from a serverless host.
+    if profile == "local":
+        from src.domains.system_control.tools import register_system_control_tools
+
+        domain_registrars["system_control"] = register_system_control_tools
+
     for domain_name, registrar in domain_registrars.items():
         if domain_name in disabled_domains:
             continue
         registrar(registry)
 
 
-def create_runtime(config: AppConfig = app_config) -> ApplicationRuntime:
-    """Build and wire the application runtime."""
-    init_db()
+def create_runtime(
+    config: AppConfig = app_config, profile: Profile = "local"
+) -> ApplicationRuntime:
+    """Build and wire the application runtime.
+
+    Parameters
+    ----------
+    config:
+        Loaded application config.
+    profile:
+        ``"local"`` enables desktop control and the optional vector store;
+        ``"serverless"`` registers only the cloud-safe domains.
+    """
+    try:
+        init_db()
+    except Exception:
+        # Tables normally already exist against a remote database, where
+        # create_all() is a no-op; a failure here should not stop boot.
+        logger.warning("init_db() failed — assuming tables already exist", exc_info=True)
+
     tools_config = config.tools
     permissions_config = config.permissions
     remote_config = config.remote
@@ -69,10 +106,12 @@ def create_runtime(config: AppConfig = app_config) -> ApplicationRuntime:
     permission_system._config = permissions_config
     rate_limiter = RateLimiter(tools_config, audit_log=audit_log)
     tool_registry = ToolRegistry()
-    _register_domain_tools(tool_registry, set(tools_config.disabled_domains))
+    _register_domain_tools(
+        tool_registry, set(tools_config.disabled_domains), profile, audit_log
+    )
 
     vector_store = None
-    if os.environ.get("VECTOR_DB_ENABLED", "").lower() == "true":
+    if profile == "local" and os.environ.get("VECTOR_DB_ENABLED", "").lower() == "true":
         try:
             vector_store = VectorStore()
         except VectorStoreUnavailableError:
@@ -88,22 +127,19 @@ def create_runtime(config: AppConfig = app_config) -> ApplicationRuntime:
         session_factory=SessionLocal,
         llm_summariser=_default_summariser,
     )
-    chat_client = ChatClient(session_manager=chat_session_manager)
-    router = MessageRouter(llm_client=llm_client)
-    intent_parser = IntentParser(llm_client=llm_client, audit_log=audit_log)
+    chat_client = ChatClient(llm_client=llm_client, session_manager=chat_session_manager)
     orchestrator = Orchestrator(
-        intent_parser=intent_parser,
         tool_registry=tool_registry,
         permission_system=permission_system,
         rate_limiter=rate_limiter,
         confirmation_layer=confirmation_layer,
         audit_log=audit_log,
-        retrieval_layer=retrieval_layer,
-        router=router,
+        llm_client=llm_client,
         chat_client=chat_client,
+        retrieval_layer=retrieval_layer,
     )
+
     from src.remote.api import create_app
-    from src.remote.auth import AuthManager
 
     auth_manager = AuthManager(audit_log=audit_log, auth_config=remote_config)
     app = create_app(
@@ -112,6 +148,7 @@ def create_runtime(config: AppConfig = app_config) -> ApplicationRuntime:
         auth_manager,
         permissions_config,
         session_manager=chat_session_manager,
+        profile=profile,
     )
 
     return ApplicationRuntime(
@@ -123,7 +160,7 @@ def create_runtime(config: AppConfig = app_config) -> ApplicationRuntime:
         tool_registry=tool_registry,
         retrieval_layer=retrieval_layer,
         chat_session_manager=chat_session_manager,
-        intent_parser=intent_parser,
+        llm_client=llm_client,
         orchestrator=orchestrator,
         auth_manager=auth_manager,
         app=app,

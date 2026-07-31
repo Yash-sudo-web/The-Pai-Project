@@ -1,0 +1,6 @@
+{
+  "_comment": "Credentials belong in the environment, not here. Set PAI_API_KEY and/or PAI_JWT_SECRET (>= 24 random chars). Values in this file are only a last-resort fallback and any recognisable placeholder is rejected at startup.",
+  "jwt_secret": null,
+  "api_key": null,
+  "jwt_algorithm": "HS256"
+}

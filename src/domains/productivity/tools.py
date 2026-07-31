@@ -13,6 +13,7 @@ from typing import Any
 from src.memory.db import SessionLocal, Task
 from src.tools.registry import ToolDefinition, ToolRegistry
 from src.types import DomainName, PermissionLevel
+from src.context import current_user_id
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ class CreateTaskTool(ToolDefinition):
 
         task = Task(
             id=task_id,
-            user_id="default_user",
+            user_id=current_user_id(),
             title=inputs["title"],
             due_date=due_date,
             status="pending",
@@ -295,7 +296,7 @@ class ListTasksTool(ToolDefinition):
         limit = inputs.get("limit") or 20
 
         with SessionLocal() as session:
-            query = session.query(Task).filter(Task.user_id == "default_user")
+            query = session.query(Task).filter(Task.user_id == current_user_id())
 
             if status_filter:
                 query = query.filter(Task.status == status_filter)

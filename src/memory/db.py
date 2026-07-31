@@ -7,7 +7,9 @@ overridden via the DATABASE_URL environment variable.
 
 from __future__ import annotations
 
+import logging
 import os
+import warnings
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -16,17 +18,22 @@ from sqlalchemy import (
     Column,
     Date,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     REAL,
     Text,
     UniqueConstraint,
     create_engine,
+    func,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
+from sqlalchemy.pool import NullPool
 from sqlalchemy.types import DateTime
 
 from src.config import load_env_file
+
+logger = logging.getLogger(__name__)
 
 load_env_file()
 
@@ -51,11 +58,21 @@ def _resolve_database_url() -> str:
 
 DATABASE_URL: str = _resolve_database_url()
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-    pool_pre_ping=not DATABASE_URL.startswith("sqlite"),
-)
+_IS_SQLITE = DATABASE_URL.startswith("sqlite")
+# On a serverless host each invocation gets a short-lived process, so a
+# connection pool is never reused — it just holds sockets open against the
+# database. NullPool opens and closes per checkout instead.
+_IS_SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
+_engine_kwargs: dict = {
+    "connect_args": {"check_same_thread": False} if _IS_SQLITE else {},
+    "pool_pre_ping": not _IS_SQLITE,
+}
+if _IS_SERVERLESS and not _IS_SQLITE:
+    _engine_kwargs["poolclass"] = NullPool
+    _engine_kwargs.pop("pool_pre_ping")
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -81,6 +98,14 @@ class Workout(Base):
     worked_out_at = Column(DateTime(timezone=True), nullable=True)  # when the workout actually happened
     logged_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
+    __table_args__ = (
+        # Every history/PR query filters by user and either exercise name
+        # (case-insensitively) or date; without these each one is a seq scan
+        # over the network.
+        Index("ix_workouts_user_exercise", "user_id", func.lower(exercise)),
+        Index("ix_workouts_user_date", "user_id", worked_out_at.desc()),
+    )
+
 
 class Meal(Base):
     """Nutrition meal log entry."""
@@ -100,6 +125,10 @@ class Meal(Base):
     meal_type = Column(Text, nullable=True)  # breakfast, lunch, dinner, snack
     eaten_at = Column(DateTime(timezone=True), nullable=True)  # when the user actually ate
     logged_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        Index("ix_meals_user_eaten", "user_id", eaten_at.desc()),
+    )
 
 
 class Task(Base):
@@ -121,6 +150,7 @@ class Task(Base):
 
     __table_args__ = (
         CheckConstraint("status IN ('pending', 'completed', 'overdue')", name="ck_tasks_status"),
+        Index("ix_tasks_user_status_due", "user_id", "status", "due_date"),
     )
 
 
@@ -138,6 +168,10 @@ class AuditLog(Base):
     error = Column(Text, nullable=True)
     approval_status = Column(Text, nullable=False)
     session_id = Column(Text, nullable=False)
+
+    __table_args__ = (
+        Index("ix_audit_session_ts", "session_id", timestamp.desc()),
+    )
 
 
 class Note(Base):
@@ -184,6 +218,10 @@ class NutritionGoal(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
+    __table_args__ = (
+        Index("ix_nutrition_goals_user_active", "user_id", "is_active"),
+    )
+
 
 class ChatSession(Base):
     """Daily chat session — exactly one per user per calendar day."""
@@ -204,6 +242,7 @@ class ChatSession(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "session_date", name="uq_chat_session_user_date"),
         CheckConstraint("status IN ('active', 'closed')", name="ck_chat_session_status"),
+        Index("ix_chat_sessions_user_date", "user_id", session_date.desc()),
     )
 
 
@@ -222,9 +261,69 @@ class ChatMessage(Base):
 
     __table_args__ = (
         CheckConstraint("role IN ('user', 'assistant', 'system')", name="ck_chat_message_role"),
+        # Context building fetches the newest N messages for one session on
+        # every conversational turn.
+        Index("ix_chat_messages_session_created", "session_id", created_at.desc()),
+    )
+
+
+class CommandReceipt(Base):
+    """Idempotency record for a submitted command.
+
+    A mobile client that retries after a timeout would otherwise log the same
+    meal twice. The key is reserved before the command runs, so a retry that
+    arrives mid-flight is refused rather than duplicated.
+    """
+
+    __tablename__ = "command_receipts"
+
+    id = Column(Text, primary_key=True)  # f"{user_id}:{idempotency_key}"
+    user_id = Column(Text, nullable=False)
+    idempotency_key = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="in_progress")
+    response = Column(Text, nullable=True)  # JSON payload of the original reply
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        CheckConstraint("status IN ('in_progress', 'completed')", name="ck_receipt_status"),
+        Index("ix_command_receipts_created", created_at.desc()),
     )
 
 
 def init_db() -> None:
-    """Create all tables if they do not already exist."""
+    """Create tables and indexes for a database Alembic does not manage.
+
+    Once a database has an ``alembic_version`` table, migrations own the
+    schema and this becomes a no-op — otherwise ``create_all`` would quietly
+    add tables that no migration knows about.
+
+    For unmanaged databases, indexes are created explicitly because
+    ``create_all`` skips existing tables entirely, so an index added to a
+    model after the table was first created would never be built.
+    """
+    if _alembic_manages_schema():
+        return
+
     Base.metadata.create_all(bind=engine)
+
+    with warnings.catch_warnings():
+        # SQLite cannot reflect expression-based indexes, so checkfirst warns
+        # about ix_workouts_user_exercise on every call. Nothing actionable.
+        warnings.filterwarnings("ignore", message=".*expression-based index.*")
+        with engine.begin() as connection:
+            for table in Base.metadata.sorted_tables:
+                for index in table.indexes:
+                    try:
+                        index.create(bind=connection, checkfirst=True)
+                    except Exception:  # pragma: no cover - index already present
+                        logger.debug("Could not create index %s", index.name, exc_info=True)
+
+
+def _alembic_manages_schema() -> bool:
+    """True when the database carries an Alembic version stamp."""
+    try:
+        from sqlalchemy import inspect
+
+        return inspect(engine).has_table("alembic_version")
+    except Exception:
+        return False

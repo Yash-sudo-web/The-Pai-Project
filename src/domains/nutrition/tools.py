@@ -14,6 +14,7 @@ from src.domains.nutrition import food_db
 from src.memory.db import Meal, SessionLocal
 from src.tools.registry import ToolDefinition, ToolRegistry
 from src.types import DomainName, PermissionLevel
+from src.context import current_user_id
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +186,7 @@ class LogMealTool(ToolDefinition):
 
         meal = Meal(
             id=meal_id,
-            user_id="default_user",
+            user_id=current_user_id(),
             food_item=food_item,
             quantity=quantity,
             unit=unit,
@@ -383,7 +384,7 @@ class LogWaterTool(ToolDefinition):
             try:
                 entry = WaterIntake(
                     id=entry_id,
-                    user_id="default_user",
+                    user_id=current_user_id(),
                     amount_ml=amount_ml,
                     logged_at=now,
                 )
@@ -398,7 +399,7 @@ class LogWaterTool(ToolDefinition):
             daily_total = (
                 session.query(func.coalesce(func.sum(WaterIntake.amount_ml), 0.0))
                 .filter(
-                    WaterIntake.user_id == "default_user",
+                    WaterIntake.user_id == current_user_id(),
                     WaterIntake.logged_at >= today_start,
                     WaterIntake.logged_at < today_end,
                 )
@@ -434,9 +435,11 @@ class LogWaterTool(ToolDefinition):
 # Shared helpers for goals
 # ---------------------------------------------------------------------------
 
-def _get_active_goal(user_id: str = "default_user") -> dict[str, Any] | None:
+def _get_active_goal(user_id: str | None = None) -> dict[str, Any] | None:
     """Return the active NutritionGoal for a user, or None."""
     from src.memory.db import NutritionGoal
+
+    user_id = user_id or current_user_id()
 
     with SessionLocal() as session:
         goal = (
@@ -457,10 +460,12 @@ def _get_active_goal(user_id: str = "default_user") -> dict[str, Any] | None:
         }
 
 
-def _get_today_intake(user_id: str = "default_user") -> dict[str, Any]:
+def _get_today_intake(user_id: str | None = None) -> dict[str, Any]:
     """Return today's total meal intake and water for a user."""
     from src.memory.db import WaterIntake
     from sqlalchemy import func
+
+    user_id = user_id or current_user_id()
 
     now = datetime.now(tz=timezone.utc)
     today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
@@ -596,7 +601,7 @@ class SetGoalsTool(ToolDefinition):
                 # Deactivate existing goal
                 existing = (
                     session.query(NutritionGoal)
-                    .filter(NutritionGoal.user_id == "default_user", NutritionGoal.is_active == True)
+                    .filter(NutritionGoal.user_id == current_user_id(), NutritionGoal.is_active == True)
                     .first()
                 )
                 if existing:
@@ -605,7 +610,7 @@ class SetGoalsTool(ToolDefinition):
 
                 new_goal = NutritionGoal(
                     id=goal_id,
-                    user_id="default_user",
+                    user_id=current_user_id(),
                     calories=inputs["calories"],
                     protein_g=inputs["protein_g"],
                     carbs_g=inputs["carbs_g"],
@@ -647,7 +652,7 @@ class SetGoalsTool(ToolDefinition):
                     prev = (
                         session.query(NutritionGoal)
                         .filter(
-                            NutritionGoal.user_id == "default_user",
+                            NutritionGoal.user_id == current_user_id(),
                             NutritionGoal.is_active == False,
                         )
                         .order_by(NutritionGoal.created_at.desc())
@@ -1082,7 +1087,7 @@ class NutritionReportTool(ToolDefinition):
             meals = (
                 session.query(Meal)
                 .filter(
-                    Meal.user_id == "default_user",
+                    Meal.user_id == current_user_id(),
                     Meal.logged_at >= dt_start,
                     Meal.logged_at < dt_end,
                 )

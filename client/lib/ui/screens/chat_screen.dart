@@ -598,9 +598,9 @@ class _MessageArea extends StatelessWidget {
       itemCount: messages.length + (isThinking ? 1 : 0),
       itemBuilder: (context, index) {
         if (index == messages.length) {
-          return const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: ThinkingIndicator(),
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: ThinkingIndicator(label: provider.activeTool),
           );
         }
         return Padding(

@@ -4,7 +4,10 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../../app.dart';
 
 class ThinkingIndicator extends StatelessWidget {
-  const ThinkingIndicator({super.key});
+  const ThinkingIndicator({super.key, this.label});
+
+  /// Name of the tool currently running, shown instead of the bouncing dots.
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +47,12 @@ class ThinkingIndicator extends StatelessWidget {
             ),
             border: Border.all(color: kBorder),
           ),
-          child: const _ThreeDots(),
+          child: label == null
+              ? const _ThreeDots()
+              : Text(
+                  label!,
+                  style: TextStyle(color: kPrimaryLight, fontSize: 12),
+                ),
         ),
       ],
     );

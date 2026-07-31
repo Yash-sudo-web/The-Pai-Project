@@ -7,6 +7,7 @@ values.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any
 
 # Nutritional data per 100 g: {calories, protein_g, carbs_g, fat_g}
@@ -107,19 +108,97 @@ def fetch_nutrition_from_web(name: str) -> dict[str, float] | None:
         return None
 
 
-def lookup(name: str) -> dict[str, float] | None:
-    """Return nutritional data per 100 g for *name*, or None if not found.
+# Preparation words carry no nutritional meaning for a per-100g lookup, so
+# "grilled chicken breast" should resolve to the same row as "chicken breast".
+_PREPARATION_WORDS = frozenset(
+    {
+        "grilled", "boiled", "baked", "fried", "roasted", "steamed", "raw",
+        "cooked", "uncooked", "fresh", "frozen", "canned", "dried", "smoked",
+        "plain", "whole", "skinless", "boneless", "lean", "diced", "sliced",
+        "chopped", "shredded", "ground", "of", "a", "an", "the", "some",
+    }
+)
 
-    Lookup is case-insensitive. If not in local DB, queries web/LLM, caches, and returns.
+# Below this ratio a difflib match is more likely to be wrong than useful.
+_FUZZY_THRESHOLD = 0.82
+
+
+def _normalise(name: str) -> str:
+    """Lower-case, strip preparation words, and de-pluralise."""
+    tokens = []
+    for raw in name.lower().replace("-", " ").split():
+        token = raw.strip(" .,()")
+        if not token or token in _PREPARATION_WORDS:
+            continue
+        # Crude singularisation: enough for "eggs" / "almonds" / "berries".
+        if len(token) > 3 and token.endswith("ies"):
+            token = token[:-3] + "y"
+        elif len(token) > 3 and token.endswith("es") and not token.endswith("ses"):
+            token = token[:-2]
+        elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+            token = token[:-1]
+        tokens.append(token)
+    return " ".join(tokens)
+
+
+def match_local(name: str) -> tuple[str, dict[str, float]] | None:
+    """Best local match for *name*, as ``(matched_key, nutrition)``.
+
+    Tried in order of confidence: exact, normalised-exact, full token-subset
+    containment, then fuzzy string similarity. Returns ``None`` when nothing
+    is close enough to trust.
     """
     key = name.lower().strip()
     if key in _FOOD_DB:
-        return _FOOD_DB[key]
-    
-    # Not found! Go to the web/LLM and fetch it
-    fetched = fetch_nutrition_from_web(key)
+        return key, _FOOD_DB[key]
+
+    normalised = _normalise(key)
+    if not normalised:
+        return None
+
+    normalised_index = {_normalise(k): k for k in _FOOD_DB}
+    if normalised in normalised_index:
+        original = normalised_index[normalised]
+        return original, _FOOD_DB[original]
+
+    # Token containment: "chicken breast with rice" is not a match for either,
+    # but "grilled chicken breast" contains every token of "chicken breast".
+    query_tokens = set(normalised.split())
+    best_containment: tuple[int, str] | None = None
+    for candidate_norm, original in normalised_index.items():
+        candidate_tokens = set(candidate_norm.split())
+        if candidate_tokens and candidate_tokens <= query_tokens:
+            score = len(candidate_tokens)
+            if best_containment is None or score > best_containment[0]:
+                best_containment = (score, original)
+    if best_containment is not None:
+        return best_containment[1], _FOOD_DB[best_containment[1]]
+
+    # Last resort: typo tolerance ("chiken brest").
+    close = difflib.get_close_matches(
+        normalised, list(normalised_index), n=1, cutoff=_FUZZY_THRESHOLD
+    )
+    if close:
+        original = normalised_index[close[0]]
+        return original, _FOOD_DB[original]
+
+    return None
+
+
+def lookup(name: str) -> dict[str, float] | None:
+    """Return nutritional data per 100 g for *name*, or None if not found.
+
+    Local matching (exact, then fuzzy) runs first because it is instant and
+    free; only a genuine miss falls through to the LLM lookup, which costs a
+    round trip and tokens.
+    """
+    matched = match_local(name)
+    if matched is not None:
+        return matched[1]
+
+    fetched = fetch_nutrition_from_web(name.lower().strip())
     if fetched is not None:
-        _FOOD_DB[key] = fetched  # cache it locally so we don't look it up again
+        _FOOD_DB[name.lower().strip()] = fetched  # cache so we only pay once
         return fetched
 
     return None

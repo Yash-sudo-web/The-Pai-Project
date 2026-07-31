@@ -68,11 +68,27 @@ class RemoteAuthConfig(BaseModel):
 
 
 def load_env_file(path: str = ".env", override: bool = False) -> None:
-    """Load simple KEY=VALUE pairs from a dotenv-style file into os.environ."""
+    """Load KEY=VALUE pairs from a dotenv-style file into ``os.environ``.
+
+    Delegates to python-dotenv, which handles quoting, escapes, multi-line
+    values and ``export`` prefixes correctly. Falls back to a minimal parser
+    if the package is unavailable so the app still boots.
+    """
     env_path = Path(path)
     if not env_path.exists():
         return
 
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        _load_env_file_fallback(env_path, override)
+        return
+
+    load_dotenv(env_path, override=override, encoding="utf-8")
+
+
+def _load_env_file_fallback(env_path: Path, override: bool) -> None:
+    """Naive KEY=VALUE reader used only when python-dotenv is missing."""
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -107,8 +123,19 @@ def load_permissions_config(path: str = "config/permissions.json") -> Permission
 
 
 def load_remote_auth_config(path: str = "config/remote.json") -> RemoteAuthConfig:
-    """Load remote authentication settings from *path*."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    """Load remote authentication settings from *path*.
+
+    The file is optional: credentials are normally supplied via the
+    ``PAI_API_KEY`` / ``PAI_JWT_SECRET`` environment variables, and a missing
+    or unreadable file must not stop the app from booting.
+    """
+    config_path = Path(path)
+    if not config_path.exists():
+        return RemoteAuthConfig()
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return RemoteAuthConfig()
     return RemoteAuthConfig.model_validate(data)
 
 

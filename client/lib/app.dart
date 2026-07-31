@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'ui/screens/chat_screen.dart';
+import 'ui/screens/auth_gate.dart';
 
 // ── Design tokens ──────────────────────────────────────────────────────────
 const kBg           = Color(0xFF08080F);
@@ -26,7 +26,7 @@ class PaiApp extends StatelessWidget {
       title: 'PAI — Personal AI Assistant',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
-      home: const ChatScreen(),
+      home: const AuthGate(),
     );
   }
 

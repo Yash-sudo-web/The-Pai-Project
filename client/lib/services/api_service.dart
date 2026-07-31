@@ -25,6 +25,20 @@ class CommandResult {
   final String? pendingId;
 }
 
+/// One frame from the `/command/stream` SSE endpoint.
+enum CommandEventType { token, tool, pendingConfirmation, result, error }
+
+class CommandEvent {
+  const CommandEvent(this.type, {this.text, this.toolName, this.toolStatus, this.pendingId, this.result});
+
+  final CommandEventType type;
+  final String? text;
+  final String? toolName;
+  final String? toolStatus;
+  final String? pendingId;
+  final CommandResult? result;
+}
+
 class ApiService {
   ApiService({required SharedPreferences prefs}) : _prefs = prefs;
 
@@ -33,10 +47,97 @@ class ApiService {
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${AppConfig.getApiKey(_prefs)}',
+        'Authorization': 'Bearer ${AppConfig.getCredential(_prefs)}',
       };
 
   String get _baseUrl => AppConfig.getBaseUrl(_prefs);
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
+
+  /// Whether the backend offers password login (and how long sessions last).
+  Future<({bool passwordLogin, int sessionDays})> authStatus({String? baseUrl}) async {
+    final root = (baseUrl ?? _baseUrl).replaceAll(RegExp(r'/+$'), '');
+    final r = await _client
+        .get(Uri.parse('$root/auth/status'))
+        .timeout(const Duration(seconds: 10));
+    if (r.statusCode != 200) {
+      throw ApiException('Server error (${r.statusCode})', statusCode: r.statusCode);
+    }
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    return (
+      passwordLogin: data['password_login'] as bool? ?? false,
+      sessionDays: data['session_days'] as int? ?? 30,
+    );
+  }
+
+  /// Exchange the account password for a session token.
+  Future<({String token, DateTime? expiresAt})> login(
+    String password, {
+    String? baseUrl,
+  }) async {
+    final root = (baseUrl ?? _baseUrl).replaceAll(RegExp(r'/+$'), '');
+    final http.Response r;
+    try {
+      r = await _client
+          .post(
+            Uri.parse('$root/auth/login'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'password': password}),
+          )
+          .timeout(const Duration(seconds: 20));
+    } catch (e) {
+      throw ApiException('Could not reach the server: $e');
+    }
+
+    if (r.statusCode != 200) {
+      throw ApiException(_detail(r) ?? 'Login failed (${r.statusCode})',
+          statusCode: r.statusCode);
+    }
+
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    return (
+      token: data['access_token'] as String,
+      expiresAt: DateTime.tryParse(data['expires_at'] as String? ?? ''),
+    );
+  }
+
+  /// Extend the current session. Returns null when it could not be renewed.
+  Future<({String token, DateTime? expiresAt})?> refreshSession() async {
+    try {
+      final r = await _client
+          .post(Uri.parse('$_baseUrl/auth/refresh'), headers: _headers)
+          .timeout(const Duration(seconds: 15));
+      if (r.statusCode != 200) return null;
+      final data = jsonDecode(r.body) as Map<String, dynamic>;
+      return (
+        token: data['access_token'] as String,
+        expiresAt: DateTime.tryParse(data['expires_at'] as String? ?? ''),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Validate the stored credential. Returns false only on a definite 401.
+  Future<bool> verifyCredential() async {
+    try {
+      final r = await _client
+          .get(Uri.parse('$_baseUrl/auth/me'), headers: _headers)
+          .timeout(const Duration(seconds: 15));
+      if (r.statusCode == 401) return false;
+      return true; // network/5xx: assume still valid, stay signed in offline
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static String? _detail(http.Response r) {
+    try {
+      final body = jsonDecode(r.body);
+      if (body is Map && body['detail'] is String) return body['detail'] as String;
+    } catch (_) {}
+    return null;
+  }
 
   // ── Send command ─────────────────────────────────────────────────────────
 
@@ -81,6 +182,96 @@ class ApiService {
       rethrow;
     } catch (e) {
       throw ApiException('Network error: $e');
+    }
+  }
+
+  /// Stream a command's reply as it is generated.
+  ///
+  /// Falls back to nothing on transport failure — callers should catch
+  /// [ApiException] and retry with [sendCommand] if they want the blocking
+  /// behaviour.
+  Stream<CommandEvent> sendCommandStream(String command) async* {
+    final uri = Uri.parse('$_baseUrl/command/stream');
+    final request = http.Request('POST', uri)
+      ..headers.addAll({..._headers, 'Accept': 'text/event-stream'})
+      ..body = jsonEncode({'command': command});
+
+    final http.StreamedResponse response;
+    try {
+      response = await _client.send(request).timeout(const Duration(seconds: 30));
+    } catch (e) {
+      throw ApiException('Network error: $e');
+    }
+
+    if (response.statusCode == 401) {
+      throw const ApiException(
+        'Authentication failed — check your API key in Settings.',
+        statusCode: 401,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw ApiException('Server error (${response.statusCode})',
+          statusCode: response.statusCode);
+    }
+
+    var eventName = '';
+    final dataLines = <String>[];
+
+    final lines = response.stream.transform(utf8.decoder).transform(const LineSplitter());
+    await for (final line in lines) {
+      if (line.isEmpty) {
+        // Blank line terminates an SSE frame.
+        if (dataLines.isNotEmpty) {
+          final event = _parseEvent(eventName, dataLines.join('\n'));
+          if (event != null) yield event;
+        }
+        eventName = '';
+        dataLines.clear();
+        continue;
+      }
+      if (line.startsWith(':')) continue; // comment / keep-alive
+      if (line.startsWith('event:')) {
+        eventName = line.substring(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.add(line.substring(5).trim());
+      }
+    }
+  }
+
+  CommandEvent? _parseEvent(String name, String rawData) {
+    final Map<String, dynamic> data;
+    try {
+      data = jsonDecode(rawData) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+
+    switch (name) {
+      case 'token':
+        return CommandEvent(CommandEventType.token, text: data['text'] as String? ?? '');
+      case 'tool':
+        return CommandEvent(
+          CommandEventType.tool,
+          toolName: data['name'] as String?,
+          toolStatus: data['status'] as String?,
+        );
+      case 'pending_confirmation':
+        return CommandEvent(
+          CommandEventType.pendingConfirmation,
+          pendingId: data['pending_id'] as String?,
+        );
+      case 'result':
+        return CommandEvent(
+          CommandEventType.result,
+          result: CommandResult(
+            success: data['success'] as bool? ?? true,
+            message: data['message'] as String? ?? '',
+          ),
+        );
+      case 'error':
+        return CommandEvent(CommandEventType.error, text: data['message'] as String?);
+      default:
+        return null; // 'done' and anything unrecognised
     }
   }
 

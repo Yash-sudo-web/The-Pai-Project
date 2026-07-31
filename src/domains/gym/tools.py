@@ -20,6 +20,7 @@ from sqlalchemy import and_, func
 from src.memory.db import SessionLocal, Workout
 from src.tools.registry import ToolDefinition, ToolRegistry
 from src.types import DomainName, PermissionLevel
+from src.context import current_user_id
 
 
 # ---------------------------------------------------------------------------
@@ -96,8 +97,9 @@ def _group_workout_sessions(workouts: list) -> list[dict]:
     return result
 
 
-def _compute_pr_info(exercise: str, user_id: str = "default_user") -> dict[str, Any]:
+def _compute_pr_info(exercise: str, user_id: str | None = None) -> dict[str, Any]:
     """Return PR data for an exercise: max weight, max volume session, 1RM estimate."""
+    user_id = user_id or current_user_id()
     with SessionLocal() as session:
         rows = (
             session.query(Workout)
@@ -273,7 +275,7 @@ class LogWorkoutTool(ToolDefinition):
                     workout_id = str(uuid.uuid4())
                     workout = Workout(
                         id=workout_id,
-                        user_id="default_user",
+                        user_id=current_user_id(),
                         exercise=exercise,
                         sets=sets_val,
                         reps=reps,
@@ -443,7 +445,7 @@ class GetWorkoutHistoryTool(ToolDefinition):
         query_parts = []
 
         with SessionLocal() as session:
-            query = session.query(Workout).filter(Workout.user_id == "default_user")
+            query = session.query(Workout).filter(Workout.user_id == current_user_id())
 
             # --- Specific date ---
             if date_str:
@@ -642,7 +644,7 @@ class SuggestProgressionTool(ToolDefinition):
                 session.query(Workout)
                 .filter(
                     func.lower(Workout.exercise) == exercise.lower(),
-                    Workout.user_id == "default_user",
+                    Workout.user_id == current_user_id(),
                 )
                 .order_by(Workout.worked_out_at.desc().nullslast())
                 .all()

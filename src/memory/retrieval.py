@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from src.memory.db import Note, SessionLocal
 from src.types import RetrievedRecord
+from src.context import current_user_id
 
 
 def _encode_metadata(metadata: dict[str, Any]) -> bytes | None:
@@ -51,7 +52,7 @@ class RetrievalLayer:
         note_id = str(uuid.uuid4())
         note = Note(
             id=note_id,
-            user_id="default_user",
+            user_id=current_user_id(),
             content=text,
             embedding=_encode_metadata(metadata or {}),
             created_at=datetime.now(tz=timezone.utc),
@@ -75,7 +76,9 @@ class RetrievalLayer:
     def _keyword_query(self, query: str, top_k: int) -> list[RetrievedRecord]:
         terms = [term.strip() for term in query.lower().split() if term.strip()]
         with self._session_factory() as session:
-            statement = session.query(Note)
+            # Scoped to the caller: notes are personal, and an unscoped search
+            # would leak them across users.
+            statement = session.query(Note).filter(Note.user_id == current_user_id())
             if terms:
                 filters = [Note.content.ilike(f"%{term}%") for term in terms]
                 statement = statement.filter(or_(*filters))

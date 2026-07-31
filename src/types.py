@@ -16,6 +16,8 @@ class DomainName(str, Enum):
     nutrition = "nutrition"
     productivity = "productivity"
     system_control = "system_control"
+    memory = "memory"
+    review = "review"
 
 
 class PermissionLevel(str, Enum):

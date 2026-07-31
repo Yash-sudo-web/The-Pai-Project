@@ -4,11 +4,13 @@ Vercel's Python runtime requires a bare top-level assignment of the form
 `app = <callable>()` so its static AST parser can detect the ASGI handler.
 All error handling is therefore kept inside `_build_app()` rather than
 wrapping the assignment itself in a try/except.
+
+Wiring lives in ``src.main.create_runtime`` so this entrypoint and the local
+one cannot drift apart; the only difference is the profile.
 """
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -26,95 +28,13 @@ _init_error: str | None = None  # populated when _build_app() fails
 def _build_app() -> FastAPI:
     """Build the full runtime app, or return a degraded app on failure."""
     try:
-        from src.config import AppConfig, app_config
-        from src.memory.db import SessionLocal, init_db
-        from src.memory.retrieval import RetrievalLayer
-        from src.memory.chat_sessions import ChatSessionManager
-        from src.orchestrator.intent_parser import IntentParser
-        from src.orchestrator.chat import ChatClient, _default_summariser
-        from src.orchestrator.llm import LLMClient
-        from src.orchestrator.orchestrator import Orchestrator
-        from src.orchestrator.router import MessageRouter
-        from src.safety.audit import AuditLog
-        from src.safety.confirmation import ConfirmationLayer
-        from src.safety.permissions import PermissionSystem
-        from src.safety.rate_limiter import RateLimiter
-        from src.tools.registry import ToolRegistry
-        from src.remote.auth import AuthManager
-        from src.remote.api import create_app
-        from src.domains.gym.tools import register_gym_tools
-        from src.domains.nutrition.tools import register_nutrition_tools
-        from src.domains.productivity.tools import register_productivity_tools
+        from src.main import create_runtime
 
-        try:
-            init_db()
-        except Exception:
-            # Tables already exist in the remote DB — create_all() is a no-op.
-            # On Vercel, an IPv6-only DATABASE_URL will fail here; switch to the
-            # Supabase pooler URL (IPv4) in Vercel env vars to resolve this.
-            logger.warning("init_db() failed — assuming tables already exist", exc_info=True)
-
-        cfg: AppConfig = app_config
-        tools_cfg = cfg.tools
-        permissions_cfg = cfg.permissions
-        remote_cfg = cfg.remote
-
-        audit_log = AuditLog(SessionLocal)
-        confirmation_layer = ConfirmationLayer(audit_log=audit_log)
-        permission_system = PermissionSystem()
-        permission_system._config = permissions_cfg
-        rate_limiter = RateLimiter(tools_cfg, audit_log=audit_log)
-
-        tool_registry = ToolRegistry()
-        disabled = set(tools_cfg.disabled_domains)
-
-        # Register only cloud-safe domains (system_control needs pyautogui/pynput)
-        for domain_name, registrar in [
-            ("gym", register_gym_tools),
-            ("nutrition", register_nutrition_tools),
-            ("productivity", register_productivity_tools),
-        ]:
-            if domain_name not in disabled:
-                registrar(tool_registry)
-
-        retrieval_layer = RetrievalLayer(
-            session_factory=SessionLocal,
-            vector_store=None,
-            vector_db_enabled=False,
-        )
-
-        llm_client = LLMClient()
-        chat_session_manager = ChatSessionManager(
-            session_factory=SessionLocal,
-            llm_summariser=_default_summariser,
-        )
-        chat_client = ChatClient(session_manager=chat_session_manager)
-        router = MessageRouter(llm_client=llm_client)
-        intent_parser = IntentParser(llm_client=llm_client, audit_log=audit_log)
-        orchestrator = Orchestrator(
-            intent_parser=intent_parser,
-            tool_registry=tool_registry,
-            permission_system=permission_system,
-            rate_limiter=rate_limiter,
-            confirmation_layer=confirmation_layer,
-            audit_log=audit_log,
-            retrieval_layer=retrieval_layer,
-            router=router,
-            chat_client=chat_client,
-        )
-
-        auth_manager = AuthManager(audit_log=audit_log, auth_config=remote_cfg)
-
-        return create_app(
-            orchestrator,
-            confirmation_layer,
-            auth_manager,
-            permissions_cfg,
-            session_manager=chat_session_manager,
-        )
+        return create_runtime(profile="serverless").app
 
     except Exception as exc:
         import traceback
+
         global _init_error
         _init_error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
         logger.exception("PAI runtime failed to initialise; starting in degraded mode")

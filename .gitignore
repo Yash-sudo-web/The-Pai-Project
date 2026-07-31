@@ -6,3 +6,4 @@ __pycache__/
 .kiro
 .pytest_cache
 personal_ai_assistant.egg-info
+config/remote.json
