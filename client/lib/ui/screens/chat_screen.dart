@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 
 import '../../app.dart';
+import '../../models/chat_message.dart';
 import '../../providers/chat_provider.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/thinking_indicator.dart';
@@ -42,6 +43,25 @@ class _ChatScreenState extends State<ChatScreen> {
       provider.consumeTranscribedText();
       _focusNode.requestFocus();
     }
+
+    // Follow the reply as tokens arrive — but only if the user is already at
+    // the bottom, so scrolling back to re-read something isn't yanked away.
+    if (provider.isStreaming && _isNearBottom) _stickToBottom();
+  }
+
+  bool get _isNearBottom {
+    if (!_scrollController.hasClients) return true;
+    final position = _scrollController.position;
+    return position.maxScrollExtent - position.pixels < 140;
+  }
+
+  /// Jump without animating: token updates arrive faster than an animation
+  /// can finish, and queued animations fight each other.
+  void _stickToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    });
   }
 
   @override
@@ -64,11 +84,13 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _send() async {
-    final text = _inputController.text.trim();
+  Future<void> _send([String? preset]) async {
+    final text = (preset ?? _inputController.text).trim();
     if (text.isEmpty) return;
     _inputController.clear();
-    _focusNode.requestFocus();
+    // Keyboards steal the view on mobile; only refocus where it's free.
+    if (MediaQuery.of(context).size.width >= 800) _focusNode.requestFocus();
+    _scrollToBottom();
     await context.read<ChatProvider>().sendCommand(text);
     _scrollToBottom();
   }
@@ -117,33 +139,40 @@ class _ChatScreenState extends State<ChatScreen> {
 
                 // ── Right: Chat Panel ─────────────────────────────────────────
                 SizedBox(
-                  width: 360,
+                  // Chat is the primary surface; a fixed 360 wasted a wide
+                  // window and made long replies a column of short lines.
+                  width: (MediaQuery.of(context).size.width * 0.40)
+                      .clamp(360.0, 620.0),
                   child: _ChatPanel(
                     inputController: _inputController,
                     scrollController: _scrollController,
                     focusNode: _focusNode,
                     onSend: _send,
+                    onSuggestion: _send,
                   ),
                 ),
               ],
             )
-          : Stack(
-              children: [
-                _ChatPanel(
-                  inputController: _inputController,
-                  scrollController: _scrollController,
-                  focusNode: _focusNode,
-                  onSend: _send,
-                ),
-                Positioned(
-                  bottom: 85,
-                  right: 16,
-                  child: Transform.scale(
-                    scale: 0.6,
-                    child: const _MicButton(),
+          : SafeArea(
+              child: Stack(
+                children: [
+                  _ChatPanel(
+                    inputController: _inputController,
+                    scrollController: _scrollController,
+                    focusNode: _focusNode,
+                    onSend: _send,
+                    onSuggestion: _send,
                   ),
-                ),
-              ],
+                  Positioned(
+                    bottom: 85,
+                    right: 16,
+                    child: Transform.scale(
+                      scale: 0.6,
+                      child: const _MicButton(),
+                    ),
+                  ),
+                ],
+              ),
             ),
     );
   }
@@ -503,11 +532,13 @@ class _ChatPanel extends StatelessWidget {
     required this.scrollController,
     required this.focusNode,
     required this.onSend,
+    this.onSuggestion,
   });
   final TextEditingController inputController;
   final ScrollController scrollController;
   final FocusNode focusNode;
   final VoidCallback onSend;
+  final void Function(String)? onSuggestion;
 
   @override
   Widget build(BuildContext context) {
@@ -523,7 +554,12 @@ class _ChatPanel extends StatelessWidget {
           const Divider(height: 1, color: kBorder),
 
           // Messages
-          Expanded(child: _MessageArea(scrollController: scrollController)),
+          Expanded(
+            child: _MessageArea(
+              scrollController: scrollController,
+              onSuggestion: onSuggestion,
+            ),
+          ),
 
           // Confirmation bar
           _ConfirmationBar(),
@@ -572,9 +608,38 @@ class _PanelHeader extends StatelessWidget {
   }
 }
 
-class _MessageArea extends StatelessWidget {
-  const _MessageArea({required this.scrollController});
+class _MessageArea extends StatefulWidget {
+  const _MessageArea({required this.scrollController, this.onSuggestion});
   final ScrollController scrollController;
+  final void Function(String)? onSuggestion;
+
+  @override
+  State<_MessageArea> createState() => _MessageAreaState();
+}
+
+class _MessageAreaState extends State<_MessageArea> {
+  bool _showJumpButton = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    widget.scrollController.removeListener(_onScroll);
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!widget.scrollController.hasClients) return;
+    final position = widget.scrollController.position;
+    final scrolledUp = position.maxScrollExtent - position.pixels > 240;
+    if (scrolledUp != _showJumpButton) {
+      setState(() => _showJumpButton = scrolledUp);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -583,31 +648,186 @@ class _MessageArea extends StatelessWidget {
     final isThinking = provider.isThinking;
 
     if (messages.isEmpty && !isThinking) {
-      return Center(
-        child: Text(
-          'No messages yet.\nSpeak or type to begin.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: kTextMuted, fontSize: 13, height: 1.6),
-        ).animate().fadeIn(duration: 400.ms),
-      );
+      return _EmptyState(onSuggestion: widget.onSuggestion);
     }
 
-    return ListView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: messages.length + (isThinking ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index == messages.length) {
-          return Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: ThinkingIndicator(label: provider.activeTool),
-          );
-        }
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: MessageBubble(message: messages[index]),
-        );
-      },
+    return Stack(
+      children: [
+        // Lets a selection span several bubbles instead of stopping at each.
+        SelectionArea(
+          child: ListView.builder(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            itemCount: messages.length + (isThinking ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index == messages.length) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: ThinkingIndicator(label: provider.activeTool),
+                );
+              }
+              final isLast = index == messages.length - 1;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: MessageBubble(
+                  message: messages[index],
+                  isStreaming: provider.isStreaming &&
+                      isLast &&
+                      messages[index].role == MessageRole.assistant,
+                ),
+              );
+            },
+          ),
+        ),
+        if (_showJumpButton)
+          Positioned(
+            bottom: 12,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: _JumpToLatest(
+                onTap: () => widget.scrollController.animateTo(
+                  widget.scrollController.position.maxScrollExtent,
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOut,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _JumpToLatest extends StatelessWidget {
+  const _JumpToLatest({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: kSurfaceVar,
+      borderRadius: BorderRadius.circular(20),
+      elevation: 4,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: kBorder),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.arrow_downward_rounded, size: 14, color: kPrimaryLight),
+              SizedBox(width: 6),
+              Text('Latest',
+                  style: TextStyle(color: kTextSecondary, fontSize: 12)),
+            ],
+          ),
+        ),
+      ),
+    ).animate().fadeIn(duration: 160.ms).slideY(begin: 0.3, duration: 160.ms);
+  }
+}
+
+/// Shown on an empty conversation. The chips double as documentation for what
+/// the assistant can actually do.
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({this.onSuggestion});
+  final void Function(String)? onSuggestion;
+
+  static const _suggestions = <(IconData, String)>[
+    (Icons.fitness_center_rounded, 'What should I do at the gym today?'),
+    (Icons.restaurant_rounded, 'How am I doing on calories?'),
+    (Icons.checklist_rounded, "What's on my task list?"),
+    (Icons.insights_rounded, 'How was my week?'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Ask me anything',
+              style: TextStyle(
+                color: kTextPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Workouts, meals, tasks — speak or type.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: kTextMuted, fontSize: 13, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final (icon, text) in _suggestions)
+                  _SuggestionChip(
+                    icon: icon,
+                    label: text,
+                    onTap: () => onSuggestion?.call(text),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ).animate().fadeIn(duration: 400.ms),
+    );
+  }
+}
+
+class _SuggestionChip extends StatelessWidget {
+  const _SuggestionChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: kSurfaceVar,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: kBorder),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: kPrimaryLight),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  label,
+                  style: const TextStyle(color: kTextSecondary, fontSize: 12.5),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -674,38 +894,58 @@ class _ChatInput extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ChatProvider>();
+    final busy = provider.isThinking || provider.isTranscribing;
+    final isDesktop = MediaQuery.of(context).size.width >= 800;
+
+    // 44pt is the minimum comfortable touch target; desktop can be tighter.
+    final buttonSize = isDesktop ? 40.0 : 46.0;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+      padding: EdgeInsets.fromLTRB(16, 10, 16, isDesktop ? 14 : 10),
       decoration: const BoxDecoration(
+        color: kSurface,
         border: Border(top: BorderSide(color: kBorder)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
             child: TextField(
               controller: controller,
               focusNode: focusNode,
-              enabled: !provider.isThinking && !provider.isTranscribing,
-              maxLines: 3,
+              enabled: !busy,
+              maxLines: 5,
               minLines: 1,
-              style: const TextStyle(color: kTextPrimary, fontSize: 13),
+              textInputAction:
+                  isDesktop ? TextInputAction.send : TextInputAction.newline,
+              keyboardType: TextInputType.multiline,
+              textCapitalization: TextCapitalization.sentences,
+              // 13pt is uncomfortably small on a phone.
+              style: TextStyle(
+                color: kTextPrimary,
+                fontSize: isDesktop ? 13 : 15,
+              ),
               decoration: InputDecoration(
+                isDense: true,
                 hintText: provider.isTranscribing
                     ? 'Transcribing…'
-                    : 'ask pai anything... /cmds',
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 10),
+                    : provider.isThinking
+                        ? 'Thinking…'
+                        : 'Ask PAI anything',
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: isDesktop ? 12 : 14,
+                ),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: kBorder),
                 ),
                 enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: kBorder),
                 ),
                 focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: kAccent, width: 1.5),
                 ),
               ),
@@ -713,20 +953,58 @@ class _ChatInput extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          GestureDetector(
-            onTap: onSend,
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                gradient: const LinearGradient(
-                  colors: [kPrimary, Color(0xFF5B21B6)],
+          // Listens to the controller so the button reflects whether there is
+          // anything to send, instead of looking tappable when it is inert.
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+            builder: (context, value, _) {
+              final canSend = !busy && value.text.trim().isNotEmpty;
+              return Semantics(
+                button: true,
+                enabled: canSend,
+                label: 'Send message',
+                child: AnimatedOpacity(
+                  opacity: canSend ? 1 : 0.4,
+                  duration: const Duration(milliseconds: 150),
+                  child: Material(
+                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: canSend ? onSend : null,
+                      child: Container(
+                        width: buttonSize,
+                        height: buttonSize,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          gradient: canSend
+                              ? const LinearGradient(
+                                  colors: [kPrimary, Color(0xFF5B21B6)])
+                              : null,
+                          color: canSend ? null : kSurfaceVar,
+                          border: canSend
+                              ? null
+                              : Border.all(color: kBorder),
+                        ),
+                        child: busy
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: kTextMuted,
+                                ),
+                              )
+                            : Icon(
+                                Icons.arrow_upward_rounded,
+                                color: canSend ? Colors.white : kTextMuted,
+                                size: 19,
+                              ),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              child: const Icon(Icons.send_rounded,
-                  color: Colors.white, size: 18),
-            ),
+              );
+            },
           ),
         ],
       ),

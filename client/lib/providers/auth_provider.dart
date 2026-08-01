@@ -50,13 +50,17 @@ class AuthProvider extends ChangeNotifier {
       return;
     }
 
-    unawaited(_loadAuthStatus());
+    // Awaited, not fire-and-forget: the decision below depends on whether the
+    // server offers password login.
+    await _loadAuthStatus();
 
-    // An API key configured by hand is a valid credential on its own.
     if (AppConfig.getToken(_prefs).isEmpty) {
-      _set(AppConfig.getApiKey(_prefs).isNotEmpty
-          ? AuthState.signedIn
-          : AuthState.signedOut);
+      // A hand-entered API key is a credential for scripts, not a session.
+      // Falling back to it here would skip the login screen entirely for
+      // anyone who had configured a key before password login existed.
+      final legacyKeyOnly =
+          !_passwordLoginAvailable && AppConfig.getApiKey(_prefs).isNotEmpty;
+      _set(legacyKeyOnly ? AuthState.signedIn : AuthState.signedOut);
       return;
     }
 

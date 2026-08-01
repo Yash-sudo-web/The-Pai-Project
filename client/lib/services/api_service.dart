@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -59,7 +60,7 @@ class ApiService {
     final root = (baseUrl ?? _baseUrl).replaceAll(RegExp(r'/+$'), '');
     final r = await _client
         .get(Uri.parse('$root/auth/status'))
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 25));
     if (r.statusCode != 200) {
       throw ApiException('Server error (${r.statusCode})', statusCode: r.statusCode);
     }
@@ -84,9 +85,9 @@ class ApiService {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'password': password}),
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(const Duration(seconds: 45));
     } catch (e) {
-      throw ApiException('Could not reach the server: $e');
+      throw ApiException(_reachabilityMessage(e));
     }
 
     if (r.statusCode != 200) {
@@ -106,7 +107,7 @@ class ApiService {
     try {
       final r = await _client
           .post(Uri.parse('$_baseUrl/auth/refresh'), headers: _headers)
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 25));
       if (r.statusCode != 200) return null;
       final data = jsonDecode(r.body) as Map<String, dynamic>;
       return (
@@ -123,12 +124,22 @@ class ApiService {
     try {
       final r = await _client
           .get(Uri.parse('$_baseUrl/auth/me'), headers: _headers)
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 25));
       if (r.statusCode == 401) return false;
       return true; // network/5xx: assume still valid, stay signed in offline
     } catch (_) {
       return true;
     }
+  }
+
+  /// Timeouts against a serverless backend usually mean a cold start, not an
+  /// unreachable host — say so rather than implying the URL is wrong.
+  static String _reachabilityMessage(Object error) {
+    if (error is TimeoutException) {
+      return 'The server took too long to respond. It may be waking up from '
+          'idle — try again in a few seconds.';
+    }
+    return 'Could not reach the server: $error';
   }
 
   static String? _detail(http.Response r) {
@@ -146,7 +157,7 @@ class ApiService {
     try {
       final response = await _client
           .post(uri, headers: _headers, body: jsonEncode({'command': command}))
-          .timeout(const Duration(seconds: 60));
+          .timeout(const Duration(seconds: 90));
 
       if (response.statusCode == 401) {
         throw const ApiException(
@@ -198,7 +209,7 @@ class ApiService {
 
     final http.StreamedResponse response;
     try {
-      response = await _client.send(request).timeout(const Duration(seconds: 30));
+      response = await _client.send(request).timeout(const Duration(seconds: 60));
     } catch (e) {
       throw ApiException('Network error: $e');
     }

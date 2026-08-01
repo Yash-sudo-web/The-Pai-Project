@@ -266,20 +266,24 @@ class _SessionRow extends StatelessWidget {
               style: const TextStyle(color: kTextSecondary, fontSize: 12),
             ),
           ),
-          if (signedInWithPassword)
-            TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await context.read<AuthProvider>().signOut();
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: kError,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text('Sign out', style: TextStyle(fontSize: 12)),
+          // Always offer a route to the login screen. Without this, anyone
+          // running on a stored API key has no way to reach it.
+          TextButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await context.read<AuthProvider>().signOut();
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: signedInWithPassword ? kError : kPrimaryLight,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
+            child: Text(
+              signedInWithPassword ? 'Sign out' : 'Sign in',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
         ],
       ),
     );

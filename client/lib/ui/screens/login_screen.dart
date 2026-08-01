@@ -50,7 +50,9 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final needsUrl = auth.state == AuthState.needsSetup || auth.baseUrl.isEmpty;
+    // Always editable: if the saved backend has no password login configured,
+    // repointing it is the only way forward, so the field must be reachable.
+    const needsUrl = true;
 
     return Scaffold(
       backgroundColor: kBg,
@@ -107,7 +109,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   controller: _passwordController,
                   focusNode: _passwordFocus,
                   obscureText: _obscure,
-                  autofocus: !needsUrl,
+                  // Focus the password when the URL is already filled in.
+                  autofocus: auth.baseUrl.isNotEmpty,
                   enabled: !auth.busy,
                   // Lets the platform password manager save and refill it.
                   autofillHints: const [AutofillHints.password],

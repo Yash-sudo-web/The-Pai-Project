@@ -48,6 +48,7 @@ class ChatProvider extends ChangeNotifier {
   String? _statusError;
   bool _isOnline = true;
   String? _activeTool;
+  bool _isStreaming = false;
 
   // ── Getters ───────────────────────────────────────────────────────────────
 
@@ -67,6 +68,9 @@ class ChatProvider extends ChangeNotifier {
 
   /// Name of the tool currently executing, for the thinking indicator.
   String? get activeTool => _activeTool;
+
+  /// True while tokens are still arriving for the last assistant message.
+  bool get isStreaming => _isStreaming;
 
   // ── Config ────────────────────────────────────────────────────────────────
 
@@ -138,6 +142,7 @@ class ChatProvider extends ChangeNotifier {
             if (streamIndex == -1) {
               // First token: stop the spinner and open a bubble to grow.
               _isThinking = false;
+              _isStreaming = true;
               _activeTool = null;
               _messages.add(ChatMessage(
                 id: ChatMessage.generateId(),
@@ -199,6 +204,7 @@ class ChatProvider extends ChangeNotifier {
       _isOnline = false;
     } finally {
       _isThinking = false;
+      _isStreaming = false;
       _activeTool = null;
       notifyListeners();
       await _cache.save(_messages);

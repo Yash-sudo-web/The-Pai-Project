@@ -4,10 +4,19 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../app.dart';
 import '../../models/chat_message.dart';
+import 'markdown_text.dart';
 
 class MessageBubble extends StatefulWidget {
-  const MessageBubble({super.key, required this.message});
+  const MessageBubble({
+    super.key,
+    required this.message,
+    this.isStreaming = false,
+  });
+
   final ChatMessage message;
+
+  /// Draws a caret after the text while tokens are still arriving.
+  final bool isStreaming;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -15,40 +24,78 @@ class MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<MessageBubble> {
   bool _hovered = false;
+  bool _pinnedOpen = false;
 
   bool get _isUser => widget.message.role == MessageRole.user;
 
   @override
   Widget build(BuildContext context) {
+    // Touch platforms have no hover, so a hover-only toolbar would put copy
+    // and timestamps permanently out of reach. There, a tap toggles it.
+    final isTouch = switch (Theme.of(context).platform) {
+      TargetPlatform.iOS || TargetPlatform.android => true,
+      _ => false,
+    };
+    final showToolbar = isTouch ? _pinnedOpen : (_hovered || _pinnedOpen);
+
+    final content = Row(
+      mainAxisAlignment:
+          _isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!_isUser) _Avatar(),
+        if (!_isUser) const SizedBox(width: 10),
+        Flexible(
+          child: Column(
+            crossAxisAlignment:
+                _isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: isTouch
+                    ? () => setState(() => _pinnedOpen = !_pinnedOpen)
+                    : null,
+                onLongPress: () => _copy(context),
+                child: _Bubble(
+                  message: widget.message,
+                  isUser: _isUser,
+                  isStreaming: widget.isStreaming,
+                ),
+              ),
+              if (showToolbar)
+                _Toolbar(message: widget.message, onCopy: () => _copy(context)),
+            ],
+          ),
+        ),
+        if (_isUser) const SizedBox(width: 10),
+        if (_isUser) _UserAvatar(),
+      ],
+    );
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: Row(
-        mainAxisAlignment:
-            _isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!_isUser) _Avatar(),
-          if (!_isUser) const SizedBox(width: 10),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: _isUser
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.start,
-              children: [
-                _Bubble(
-                  message: widget.message,
-                  isUser: _isUser,
-                ),
-                if (_hovered) _Toolbar(message: widget.message, isUser: _isUser),
-              ],
-            ),
+      child: content,
+    ).animate().fadeIn(duration: 220.ms).slideY(begin: 0.06, duration: 220.ms);
+  }
+
+  void _copy(BuildContext context) {
+    Clipboard.setData(ClipboardData(text: widget.message.text));
+    HapticFeedback.selectionClick();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('Copied'),
+          duration: const Duration(milliseconds: 1200),
+          backgroundColor: kSurfaceVar,
+          behavior: SnackBarBehavior.floating,
+          width: 140,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
           ),
-          if (_isUser) const SizedBox(width: 10),
-          if (_isUser) _UserAvatar(),
-        ],
-      ),
-    ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.1, duration: 300.ms);
+        ),
+      );
   }
 }
 
@@ -92,15 +139,24 @@ class _UserAvatar extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.isUser});
+  const _Bubble({
+    required this.message,
+    required this.isUser,
+    this.isStreaming = false,
+  });
   final ChatMessage message;
   final bool isUser;
+  final bool isStreaming;
 
   @override
   Widget build(BuildContext context) {
+    // Cap by viewport share as well as absolute width so bubbles stay
+    // readable on a phone and don't sprawl on a wide desktop panel.
+    final maxWidth = MediaQuery.of(context).size.width * 0.82;
+
     if (isUser) {
       return Container(
-        constraints: const BoxConstraints(maxWidth: 560),
+        constraints: BoxConstraints(maxWidth: maxWidth.clamp(200.0, 560.0)),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
@@ -118,6 +174,7 @@ class _Bubble extends StatelessWidget {
             BoxShadow(color: kPrimary.withOpacity(0.2), blurRadius: 12),
           ],
         ),
+        // What the user typed is literal — never reinterpret it as markup.
         child: Text(
           message.text,
           style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.55),
@@ -125,12 +182,17 @@ class _Bubble extends StatelessWidget {
       );
     }
 
-    // AI message
+    final textStyle = TextStyle(
+      color: message.isError ? kError : kTextPrimary,
+      fontSize: 14,
+      height: 1.65,
+    );
+
     return Container(
-      constraints: const BoxConstraints(maxWidth: 660),
+      constraints: BoxConstraints(maxWidth: maxWidth.clamp(240.0, 660.0)),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: kSurface,
+        color: message.isError ? kError.withOpacity(0.06) : kSurface,
         borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(4),
           topRight: Radius.circular(16),
@@ -141,22 +203,52 @@ class _Bubble extends StatelessWidget {
           color: message.isError ? kError.withOpacity(0.4) : kBorder,
         ),
       ),
-      child: Text(
-        message.text,
-        style: TextStyle(
-          color: message.isError ? kError : kTextPrimary,
-          fontSize: 14,
-          height: 1.65,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Errors are plain strings from the server, not markdown.
+          if (message.isError)
+            Text(message.text, style: textStyle)
+          else
+            MarkdownText(
+              message.text,
+              baseStyle: textStyle,
+              compact: message.text.length < 160,
+            ),
+          if (isStreaming) const _StreamingCaret(),
+        ],
       ),
     );
   }
 }
 
+/// A blinking caret shown while tokens are still arriving.
+class _StreamingCaret extends StatelessWidget {
+  const _StreamingCaret();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Container(
+        width: 7,
+        height: 14,
+        decoration: BoxDecoration(
+          color: kPrimaryLight,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      )
+          .animate(onPlay: (c) => c.repeat(reverse: true))
+          .fadeIn(duration: 520.ms),
+    );
+  }
+}
+
 class _Toolbar extends StatelessWidget {
-  const _Toolbar({required this.message, required this.isUser});
+  const _Toolbar({required this.message, required this.onCopy});
   final ChatMessage message;
-  final bool isUser;
+  final VoidCallback onCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -173,16 +265,7 @@ class _Toolbar extends StatelessWidget {
           _ToolbarBtn(
             icon: Icons.copy_rounded,
             tooltip: 'Copy',
-            onTap: () {
-              Clipboard.setData(ClipboardData(text: message.text));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Copied to clipboard'),
-                  duration: Duration(seconds: 1),
-                  backgroundColor: kSurfaceVar,
-                ),
-              );
-            },
+            onTap: onCopy,
           ),
         ],
       ),
