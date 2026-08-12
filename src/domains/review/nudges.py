@@ -135,10 +135,11 @@ def _no_recent_workout(snapshot: TodaySnapshot, now: datetime) -> Nudge | None:
         title="Training",
         message=f"No workout logged in {gap} days — want to plan a session?",
         priority="medium",
-        # The gap is real but the evening is the wrong time to raise it; the
-        # morning brief carries it to the push channel when the day is still
-        # plannable.
-        channel="in_app",
+        # Worth interrupting for: four days without training is the kind of
+        # drift you only notice once someone says it out loud. When the day
+        # was blank as well, _nothing_logged says both in one line and wins
+        # the slot, so this never doubles up with it.
+        channel="push",
     )
 
 
@@ -216,19 +217,16 @@ def _morning_brief(snapshot: TodaySnapshot, now: datetime) -> Nudge | None:
 def _nothing_logged(snapshot: TodaySnapshot, now: datetime) -> Nudge | None:
     """Catches the silence that every other rule misses.
 
-    The other nutrition and gym rules all read logged data, so if the user
-    stops logging entirely they go quiet — exactly when a nudge would help
-    most. This one fires on the absence instead.
+    Every nutrition and gym rule reads logged data, so they all go quiet when
+    logging stops — exactly when a nudge would help most. This one fires on the
+    absence instead, and deliberately asks for nothing first: no nutrition
+    goal, no tasks, no history. A blank day is worth mentioning on its own.
 
-    It is deliberately gated on the user having *asked* to be tracked: an
-    account with no nutrition goal and no tasks is either brand new or not
-    being used for this, and nagging it would be noise.
+    When training has also lapsed it says so here rather than letting
+    ``workout_gap`` fire alongside it, so a blank day costs one notification
+    rather than two.
     """
     if now.hour < EVENING_HOUR:
-        return None
-
-    opted_in = snapshot.goal is not None or snapshot.pending_tasks > 0
-    if not opted_in:
         return None
 
     logged_today = (
@@ -240,10 +238,15 @@ def _nothing_logged(snapshot: TodaySnapshot, now: datetime) -> Nudge | None:
     if logged_today:
         return None
 
+    message = "No meals, water or training logged today."
+    gap = snapshot.days_since_workout
+    if gap is not None and gap >= WORKOUT_GAP_DAYS:
+        message += f" No workout in {gap} days either."
+
     return Nudge(
         kind="nothing_logged",
         title="Nothing logged",
-        message="No meals, water or training logged today. Want to catch up?",
+        message=f"{message} Want to catch up?",
         priority="medium",
         channel="push",
     )
@@ -378,9 +381,11 @@ def select_for_push(
 MORNING_SLOT = (8, 10)
 EVENING_SLOT = (19, 40)
 
-# The brief is a digest of the individual morning-relevant rules, so when it is
-# due it replaces them rather than firing alongside a subset of itself.
-_DIGEST_KIND = "morning_brief"
+# Digest rules summarise other rules, so when one is due it takes the slot
+# instead of firing alongside a subset of itself: ``morning_brief`` covers
+# tasks and training in the morning, ``nothing_logged`` covers a blank day and
+# a lapsed workout streak in the evening.
+_DIGEST_KINDS = ("morning_brief", "nothing_logged")
 
 
 @dataclass
@@ -428,7 +433,7 @@ def plan(snapshot: TodaySnapshot, now: datetime | None = None) -> list[PlannedNu
         if not due:
             continue
 
-        digest = next((n for n in due if n.kind == _DIGEST_KIND), None)
+        digest = next((n for n in due if n.kind in _DIGEST_KINDS), None)
         # evaluate() has already sorted by priority, so due[0] is the most
         # urgent when there is no digest to prefer.
         planned.append(PlannedNudge(at=at, nudge=digest or due[0]))

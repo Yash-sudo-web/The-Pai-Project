@@ -81,6 +81,17 @@ class ChatProvider extends ChangeNotifier {
   /// loop can speak it and wait.
   String? _lastReply;
 
+  /// Everything currently due, from `GET /nudges` — push and in-app alike.
+  ///
+  /// A notification is gone once it is swiped, so the banner exists to make
+  /// what it said recoverable rather than to surface some separate category
+  /// of nudge.
+  List<({String kind, String message, String priority})> _nudges = const [];
+
+  /// Kinds hidden for this run. Cleared whenever the server stops reporting
+  /// them, so a nudge that becomes true again comes back.
+  final Set<String> _dismissedNudges = {};
+
   // ── Getters ───────────────────────────────────────────────────────────────
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
@@ -96,6 +107,10 @@ class ChatProvider extends ChangeNotifier {
   bool get wakeWordEnabled => _wakeEnabled;
   String get wakeWord => WakeWordService.keywordLabel;
   String? get wakeWordError => _wake?.unavailableReason;
+
+  /// Due nudges the user has not dismissed, most urgent first.
+  List<({String kind, String message, String priority})> get visibleNudges =>
+      _nudges.where((n) => !_dismissedNudges.contains(n.kind)).toList();
   /// Read live: the credential can change after sign-in, so a snapshot taken
   /// at construction would be stale.
   bool get isConfigured => AppConfig.isConfigured(_prefs);
@@ -154,6 +169,24 @@ class ChatProvider extends ChangeNotifier {
     _ttsEnabled = value;
     _prefs.setBool('pai_tts_enabled', value);
     if (!value) _tts.stop();
+    notifyListeners();
+  }
+
+  /// Re-read what is currently due. Silent on failure — the banner simply
+  /// keeps showing whatever it last had.
+  Future<void> refreshNudges() async {
+    if (!isConfigured) return;
+    final found = await _api.fetchNudges();
+    final kinds = found.map((n) => n.kind).toSet();
+    // Stop suppressing anything the server no longer reports, so the same
+    // nudge reappears if the condition returns tomorrow.
+    _dismissedNudges.removeWhere((kind) => !kinds.contains(kind));
+    _nudges = found;
+    notifyListeners();
+  }
+
+  void dismissNudge(String kind) {
+    _dismissedNudges.add(kind);
     notifyListeners();
   }
 
@@ -259,6 +292,8 @@ class ChatProvider extends ChangeNotifier {
       _activeTool = null;
       notifyListeners();
       await _cache.save(_messages);
+      // Logging a meal or closing a task changes what is due.
+      unawaited(refreshNudges());
     }
   }
 

@@ -6,6 +6,7 @@ import '../../app.dart';
 import '../../models/chat_message.dart';
 import '../../providers/chat_provider.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/nudge_banner.dart';
 import '../widgets/thinking_indicator.dart';
 import 'chat_history_panel.dart';
 import 'settings_screen.dart';
@@ -552,6 +553,10 @@ class _ChatPanel extends StatelessWidget {
           // Header
           _PanelHeader(),
           const Divider(height: 1, color: kBorder),
+
+          // What is currently due — collapses to nothing when there is
+          // nothing, which is most of the time.
+          const NudgeBanner(),
 
           // Messages
           Expanded(

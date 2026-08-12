@@ -61,10 +61,12 @@ class TestChannels:
         assert found[0].kind == "overdue_tasks"
         assert found[0].channel == "push"
 
-    def test_workout_gap_is_in_app_the_morning_brief_carries_it(self):
+    def test_workout_gap_pushes(self):
         evening = nudges.evaluate(_snapshot(days_since_workout=5), EVENING)
-        assert [n.channel for n in evening] == ["in_app"]
+        gap = next(n for n in evening if n.kind == "workout_gap")
+        assert gap.channel == "push"
 
+    def test_morning_brief_still_carries_the_gap(self):
         morning = nudges.evaluate(_snapshot(days_since_workout=5), MORNING)
         brief = next(n for n in morning if n.kind == "morning_brief")
         assert brief.channel == "push"
@@ -109,9 +111,14 @@ class TestNothingLogged:
             kinds = [n.kind for n in nudges.evaluate(snapshot, EVENING)]
             assert "nothing_logged" not in kinds, logged
 
-    def test_an_account_that_never_opted_in_is_left_alone(self):
-        """No goal and no tasks: either brand new, or not used for tracking."""
-        assert nudges.evaluate(_snapshot(), EVENING) == []
+    def test_fires_without_a_goal_or_any_tasks(self):
+        """A blank day is worth mentioning even with nothing else configured."""
+        assert [n.kind for n in nudges.evaluate(_snapshot(), EVENING)] == ["nothing_logged"]
+
+    def test_absorbs_the_workout_gap_so_it_costs_one_notification(self):
+        found = nudges.evaluate(_snapshot(days_since_workout=6), EVENING)
+        blank = next(n for n in found if n.kind == "nothing_logged")
+        assert "No workout in 6 days" in blank.message
 
     def test_does_not_fire_before_evening(self):
         kinds = [n.kind for n in nudges.evaluate(_snapshot(goal={"calories": 2000}), MORNING)]
@@ -130,7 +137,8 @@ class TestWeeklyReview:
         assert review.dedup_hours == 6 * 24
 
     def test_empty_account_gets_no_review(self):
-        assert nudges.evaluate(_snapshot(), SUNDAY_EVENING) == []
+        kinds = [n.kind for n in nudges.evaluate(_snapshot(), SUNDAY_EVENING)]
+        assert "weekly_review" not in kinds
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +188,7 @@ class TestSelectForPush:
         assert selection.to_send == []
 
     def test_recently_sent_kinds_are_skipped(self):
-        due = nudges.evaluate(_snapshot(overdue_tasks=["taxes"]), EVENING)
+        due = nudges.evaluate(_snapshot(overdue_tasks=["taxes"], calories=500), EVENING)
         selection = nudges.select_for_push(due, EVENING, already_sent={"overdue_tasks"})
         assert selection.to_send == []
         assert selection.suppressed["overdue_tasks"] == "recently_sent"
@@ -528,7 +536,11 @@ class TestSlotTimes:
 
 class TestPlan:
     def test_nothing_due_means_nothing_scheduled(self):
-        assert nudges.plan(_snapshot(), _at(6)) == []
+        assert nudges.plan(_snapshot(calories=500, days_since_workout=0), _at(6)) == []
+
+    def test_a_blank_day_schedules_the_evening_slot(self):
+        planned = nudges.plan(_snapshot(), _at(6))
+        assert [(p.at.hour, p.nudge.kind) for p in planned] == [(19, "nothing_logged")]
 
     def test_each_slot_carries_at_most_one_notification(self):
         planned = nudges.plan(
@@ -569,7 +581,9 @@ class TestPlan:
         assert payload["at"].startswith("2026-07-30T")
 
     def test_plan_for_user_reads_the_database(self):
-        assert nudges.plan_for_user("nobody") == []
+        # An empty database is a blank day, so the evening slot is filled.
+        planned = nudges.plan_for_user("nobody")
+        assert [p.nudge.kind for p in planned] == ["nothing_logged"]
 
 
 class TestRefreshDelay:
@@ -633,9 +647,9 @@ class TestScheduleEndpoint:
         assert body["slots"][0]["message"]
         assert 60 <= body["refresh_after_seconds"] <= 15 * 60
 
-    def test_empty_when_nothing_is_due(self, client, auth_headers):
+    def test_a_blank_day_fills_only_the_evening_slot(self, client, auth_headers):
         body = client.get("/nudges/schedule", headers=auth_headers).json()
-        assert body["slots"] == [] and body["count"] == 0
+        assert [s["kind"] for s in body["slots"]] == ["nothing_logged"]
 
     def test_requires_auth(self, client):
         assert client.get("/nudges/schedule").status_code == 401

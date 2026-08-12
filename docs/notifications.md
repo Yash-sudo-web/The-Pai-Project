@@ -48,16 +48,24 @@ present. That degradation is deliberate: a stale nudge beats silence.
 
 ## What gets scheduled
 
-Only `channel: push` nudges. The in-app ones (`calories_over`, `water_behind`,
-`workout_gap`) are still returned by `GET /nudges` and never scheduled.
+Only `channel: push` nudges. The two in-app ones (`calories_over`,
+`water_behind`) are still returned by `GET /nudges` and never scheduled —
+both are retrospective, and both need an active nutrition goal to exist at
+all, so they are silent until you set one.
 
 Each slot takes **one** nudge:
 
 - **Morning (08:10)** — `morning_brief` wins if due, because it is a digest of
   the individual morning rules and firing it alongside its own parts would say
   the same thing twice. Otherwise the highest-priority nudge.
-- **Evening (19:40)** — highest priority: `overdue_tasks` (high), then
-  `protein_behind` / `nothing_logged` (medium), then `weekly_review` (low).
+- **Evening (19:40)** — `nothing_logged` wins if the day was blank, for the
+  same digest reason: it absorbs the workout gap into its own message so a
+  blank day costs one notification rather than two. Otherwise highest
+  priority: `overdue_tasks` (high), then `protein_behind` / `workout_gap`
+  (medium), then `weekly_review` (low).
+
+  `nothing_logged` asks for nothing first — no goal, no tasks, no history. A
+  blank day is reported on its own merits.
 
 Tunables live at the top of `src/domains/review/nudges.py`; the refresh cadence
 is in `src/remote/api.py` (`NUDGE_REFRESH_SECONDS`, `NUDGE_PRE_SLOT_SECONDS`).

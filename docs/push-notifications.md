@@ -127,11 +127,11 @@ each rule declares a channel.
 | `overdue_tasks` | **push** | Actionable right now |
 | `protein_behind` | **push** | Fires at 19:30 — still time to eat |
 | `morning_brief` | **push** | One predictable ping while the day is plannable |
-| `nothing_logged` | **push** | The only rule that fires on *absence* of data |
+| `nothing_logged` | **push** | The only rule that fires on *absence* of data; needs no goal or tasks |
 | `weekly_review` | **push** | Sunday evening, once a week |
 | `calories_over` | in-app | Retrospective — you cannot un-eat it |
 | `water_behind` | in-app | True most evenings; pushing it trains you to swipe |
-| `workout_gap` | in-app | The morning brief raises it at a useful hour instead |
+| `workout_gap` | **push** | Four days of drift is worth saying out loud |
 
 `GET /nudges` still returns **everything**, push and in-app alike, so nothing
 was removed from the app — only from the lock screen.

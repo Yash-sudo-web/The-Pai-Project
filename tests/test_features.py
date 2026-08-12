@@ -327,7 +327,12 @@ MORNING = datetime.datetime(2026, 7, 30, 9, tzinfo=LOCAL_TZ)
 
 class TestNudges:
     def test_quiet_when_nothing_is_wrong(self):
-        assert nudges.evaluate(_snapshot(), EVENING) == []
+        assert nudges.evaluate(_snapshot(), MORNING) == []
+
+    def test_a_blank_day_is_reported_in_the_evening(self):
+        """No goal, no tasks, no history — a blank day still deserves a word."""
+        found = nudges.evaluate(_snapshot(), EVENING)
+        assert [n.kind for n in found] == ["nothing_logged"]
 
     def test_protein_behind_only_fires_in_the_evening(self):
         snapshot = _snapshot(goal={"protein_g": 150}, protein_g=40)
@@ -341,9 +346,10 @@ class TestNudges:
         assert nudges.evaluate(snapshot, EVENING) == []
 
     def test_workout_gap(self):
-        assert nudges.evaluate(_snapshot(days_since_workout=2), EVENING) == []
-        found = nudges.evaluate(_snapshot(days_since_workout=5), EVENING)
-        assert [n.kind for n in found] == ["workout_gap"]
+        near = [n.kind for n in nudges.evaluate(_snapshot(days_since_workout=2), EVENING)]
+        assert "workout_gap" not in near
+        far = [n.kind for n in nudges.evaluate(_snapshot(days_since_workout=5), EVENING)]
+        assert "workout_gap" in far
 
     def test_overdue_tasks_are_highest_priority(self):
         snapshot = _snapshot(
@@ -363,8 +369,10 @@ class TestNudges:
         assert nudges.evaluate(_snapshot(calories=9000, protein_g=0), EVENING) == []
 
     def test_due_for_user_reads_the_database(self):
-        result = nudges.due_for_user("nobody")
-        assert result == []
+        # An explicit morning instant: the evening rules fire on an empty
+        # database by design, so a wall-clock call would pass or fail
+        # depending on when the suite runs.
+        assert nudges.due_for_user("nobody", now=MORNING) == []
 
 
 # ---------------------------------------------------------------------------
