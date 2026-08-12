@@ -221,6 +221,15 @@ class AuthManager:
         if self.password_login_available:
             logger.info("Password login enabled; sessions last %d days.", self._session_days)
 
+    @property
+    def default_user_id(self) -> str:
+        """The user a credential-only (no JWT subject) caller resolves to.
+
+        The scheduler authenticates as the deployment rather than as a person,
+        so it needs this to know whose nudges to evaluate.
+        """
+        return self._default_user_id
+
     # ------------------------------------------------------------------
     # Password login
     # ------------------------------------------------------------------

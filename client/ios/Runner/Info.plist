@@ -28,6 +28,29 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>PAI needs microphone access to hear your voice commands.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.yashmathur.paiClient</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- A Shortcut opening pai://listen starts a hands-free turn, so
+				     Back Tap or the Action Button can trigger it. -->
+				<string>pai</string>
+			</array>
+		</dict>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<!-- Lets a push wake the app so the background handler can run. -->
+		<string>remote-notification</string>
+		<!-- Keeps the AVAudioSession alive while the screen is off, so
+		     wake-word detection survives locking the phone. -->
+		<string>audio</string>
+	</array>
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

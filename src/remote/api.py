@@ -6,8 +6,10 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any, AsyncIterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
@@ -20,8 +22,9 @@ from src.observability import metrics_registry
 from src.orchestrator.orchestrator import Orchestrator, OrchestratorResponse, SessionContext
 from src.remote.auth import AuthManager, AuthenticatedClient
 from src.safety.confirmation import ConfirmationLayer
+from src.remote.push import PushSender
 from src.types import PermissionLevel
-from src.memory import idempotency
+from src.memory import devices, idempotency
 from src.memory.chat_sessions import ChatSessionManager
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,12 @@ MAX_PENDING_RUNS = 64
 PENDING_RUN_TTL_SECONDS = 300.0
 
 _MAX_COMMAND_LENGTH = 4000  # Prevent sending excessive prompts to LLM
+
+# How often the device re-asks for its notification plan. Local notifications
+# carry whatever text they were scheduled with, so freshness at fire time is
+# bounded by this interval — hence the tightening as a slot approaches.
+NUDGE_REFRESH_SECONDS = 15 * 60
+NUDGE_PRE_SLOT_SECONDS = 120
 
 
 class CommandRequest(BaseModel):
@@ -61,6 +70,11 @@ class AuthStatusResponse(BaseModel):
     session_days: int
 
 
+class DeviceRegistration(BaseModel):
+    token: str
+    platform: str  # ios | android
+
+
 class CommandRun:
     """Tracks one in-flight command so /status and /confirm can find it."""
 
@@ -86,6 +100,27 @@ def _resolve_grants(permissions: PermissionsConfig, session_name: str) -> list[P
     return [PermissionLevel(grant) for grant in session_config.grants]
 
 
+def _refresh_delay_seconds(planned: list, now: datetime | None = None) -> int:
+    """Seconds until the device should ask for its plan again.
+
+    Normally the flat interval, but shortened so a refresh always lands just
+    before a slot fires — that last refresh is what makes the notification
+    carry current numbers rather than the ones from a quarter of an hour ago.
+    """
+    now = now or datetime.now(UTC)
+    delay = float(NUDGE_REFRESH_SECONDS)
+
+    for item in planned:
+        # A slot already inside the lead window fires before another refresh
+        # could reach it, so it is skipped and the flat interval stands.
+        lead = (item.at - now).total_seconds() - NUDGE_PRE_SLOT_SECONDS
+        if 0 < lead < delay:
+            delay = lead
+
+    # Never busy-loop, however close the slot is.
+    return max(60, int(delay))
+
+
 def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
@@ -97,8 +132,13 @@ def create_app(
     permissions_config: PermissionsConfig,
     session_manager: ChatSessionManager | None = None,
     profile: str = "local",
+    push_sender: PushSender | None = None,
 ) -> FastAPI:
     """Create the FastAPI app with REST, SSE, and WebSocket endpoints."""
+
+    # Reads its config from the environment and stays disabled when Firebase
+    # is not set up, so this is safe to build unconditionally.
+    push = push_sender if push_sender is not None else PushSender()
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
@@ -469,28 +509,175 @@ def create_app(
         nudges = await asyncio.to_thread(due_for_user, client.user_id)
         return {"nudges": [n.as_dict() for n in nudges], "count": len(nudges)}
 
-    @app.post("/cron/nudges")
-    async def cron_nudges(
+    @app.get("/nudges/schedule")
+    async def nudge_schedule(
         client: AuthenticatedClient = Depends(auth_manager.authenticate),
     ) -> dict[str, Any]:
-        """Scheduled evaluation, for a cron trigger.
+        """The notifications the device should schedule locally.
 
-        Returns what is due and logs it. Actually pushing to a device needs a
-        provider (FCM/APNs) that this deployment does not have — until then
-        the client polls ``GET /nudges``.
+        Delivery on this deployment is on-device rather than pushed: iOS holds
+        the notification and fires it even if the app has since died. The app
+        re-requests this plan on the returned cadence and re-schedules, which
+        is what keeps the text current.
         """
-        from src.domains.review.nudges import due_for_user
+        from src.domains.review.nudges import plan_for_user
 
-        nudges = await asyncio.to_thread(due_for_user, client.user_id)
-        for nudge in nudges:
-            logger.info("nudge user=%s kind=%s %s", client.user_id, nudge.kind, nudge.message)
+        planned = await asyncio.to_thread(plan_for_user, client.user_id)
+        return {
+            "slots": [p.as_dict() for p in planned],
+            "count": len(planned),
+            "refresh_after_seconds": _refresh_delay_seconds(planned),
+        }
 
-        purged = await asyncio.to_thread(idempotency.purge_expired)
+    async def _authenticate_scheduler(
+        authorization: str | None = Header(default=None),
+    ) -> AuthenticatedClient:
+        """Auth for the cron trigger, which is not a person.
+
+        Vercel Cron sends ``Authorization: Bearer $CRON_SECRET``, a value it
+        will not let us reuse as the app's API key, so that secret is accepted
+        here in addition to the normal credentials. When ``CRON_SECRET`` is
+        unset this degrades to ordinary authentication.
+        """
+        cron_secret = os.environ.get("CRON_SECRET")
+        if cron_secret and authorization:
+            _, _, credential = authorization.partition(" ")
+            if credential and secrets.compare_digest(credential, cron_secret):
+                return AuthenticatedClient(
+                    session_id="scheduler",
+                    session_name="remote_session",
+                    auth_type="api_key",
+                    user_id=auth_manager.default_user_id,
+                )
+        return await auth_manager.authenticate(authorization=authorization)
+
+    # Vercel Cron only ever issues GET, but a manual trigger (or any other
+    # scheduler) naturally reaches for POST, so both are mounted.
+    @app.api_route("/cron/nudges", methods=["GET", "POST"])
+    async def cron_nudges(
+        client: AuthenticatedClient = Depends(_authenticate_scheduler),
+    ) -> dict[str, Any]:
+        """Scheduled evaluation: work out what is due and push it.
+
+        Everything that decides *whether* to interrupt lives in
+        :func:`~src.domains.review.nudges.select_for_push`; this endpoint only
+        supplies it with the delivery history and then performs the sends.
+        """
+        from src.domains.review.nudges import dedup_cutoffs, due_for_user, select_for_push
+
+        user_id = client.user_id
+        now = datetime.now(UTC)
+
+        nudges = await asyncio.to_thread(due_for_user, user_id, now)
+        push_candidates = [n for n in nudges if n.channel == "push"]
+
+        already_sent: set[str] = set()
+        if push_candidates:
+            cutoffs = dedup_cutoffs(push_candidates, now)
+            widest = min(cutoffs.values())
+            last_sent = await asyncio.to_thread(
+                devices.last_sent_map, user_id, list(cutoffs), widest
+            )
+            already_sent = {
+                kind for kind, cutoff in cutoffs.items()
+                if (ts := last_sent.get(kind)) is not None and ts >= cutoff
+            }
+
+        sent_in_last_day = await asyncio.to_thread(
+            devices.pushes_since, user_id, now - timedelta(hours=24)
+        )
+        selection = select_for_push(nudges, now, already_sent, sent_in_last_day)
+
+        tokens = await asyncio.to_thread(devices.tokens_for, user_id)
+        delivered: list[str] = []
+        pruned = 0
+
+        for nudge in selection.to_send:
+            result = await push.send_to_tokens(
+                tokens, nudge.title, nudge.message, {"kind": nudge.kind}
+            )
+            if result.dead_tokens:
+                pruned += await asyncio.to_thread(devices.unregister_many, result.dead_tokens)
+                tokens = [t for t in tokens if t not in set(result.dead_tokens)]
+            if result.sent:
+                # Only a delivered nudge opens its dedup window; a Firebase
+                # outage must not silence tomorrow's attempt.
+                await asyncio.to_thread(devices.record_sent, user_id, nudge.kind, now)
+                delivered.append(nudge.kind)
+            else:
+                logger.warning(
+                    "nudge not delivered user=%s kind=%s reason=%s",
+                    user_id, nudge.kind, result.skipped_reason,
+                )
+
+        receipts_purged = await asyncio.to_thread(idempotency.purge_expired)
+        deliveries_purged = await asyncio.to_thread(devices.purge_deliveries)
+
         return {
             "nudges": [n.as_dict() for n in nudges],
             "count": len(nudges),
-            "receipts_purged": purged,
+            "push_enabled": push.enabled,
+            "push_disabled_reason": push.disabled_reason,
+            "devices": len(tokens),
+            "delivered": delivered,
+            "suppressed": selection.suppressed,
+            "tokens_pruned": pruned,
+            "receipts_purged": receipts_purged,
+            "deliveries_purged": deliveries_purged,
         }
+
+    # ------------------------------------------------------------------
+    # Device registration for push
+    # ------------------------------------------------------------------
+
+    @app.post("/devices/register")
+    async def register_device(
+        registration: DeviceRegistration,
+        client: AuthenticatedClient = Depends(auth_manager.authenticate),
+    ) -> dict[str, Any]:
+        """Record an FCM token. The client calls this on every launch.
+
+        FCM rotates tokens on its own schedule, so re-registering is normal
+        and idempotent rather than an error.
+        """
+        token = registration.token.strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="token must not be empty")
+        try:
+            created = await asyncio.to_thread(
+                devices.register, client.user_id, token, registration.platform
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+        return {"registered": True, "created": created, "push_enabled": push.enabled}
+
+    @app.delete("/devices/{token}")
+    async def unregister_device(
+        token: str,
+        client: AuthenticatedClient = Depends(auth_manager.authenticate),
+    ) -> dict[str, Any]:
+        """Stop pushing to one device — logout, or notifications turned off."""
+        removed = await asyncio.to_thread(devices.unregister, token)
+        return {"removed": removed}
+
+    @app.post("/devices/test")
+    async def test_push(
+        client: AuthenticatedClient = Depends(auth_manager.authenticate),
+    ) -> dict[str, Any]:
+        """Send a notification right now, bypassing the rules.
+
+        The push path has several independent things that can be wrong — token
+        registration, service-account credentials, APNs setup — and waiting for
+        the daily cron to find out which is a poor debugging loop.
+        """
+        tokens = await asyncio.to_thread(devices.tokens_for, client.user_id)
+        result = await push.send_to_tokens(
+            tokens, "PAI", "Test notification — push is working.", {"kind": "test"}
+        )
+        if result.dead_tokens:
+            await asyncio.to_thread(devices.unregister_many, result.dead_tokens)
+        return {"push_enabled": push.enabled, "devices": len(tokens), **result.as_dict()}
 
     # ------------------------------------------------------------------
     # Chat history & sessions endpoints

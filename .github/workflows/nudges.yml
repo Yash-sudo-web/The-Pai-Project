@@ -1,0 +1,46 @@
+# Triggers the nudge evaluation on a schedule.
+#
+# Vercel's Hobby plan allows exactly one cron job per project and only ever
+# issues GET, which is not enough for both a morning brief and an evening
+# check. GitHub Actions has no such limit and is free on public and private
+# repos alike, so it is the recommended scheduler.
+#
+# Setup: add two repository secrets under Settings -> Secrets and variables
+# -> Actions:
+#   PAI_BASE_URL  — e.g. https://your-app.vercel.app  (no trailing slash)
+#   PAI_API_KEY   — the same value as the deployment's PAI_API_KEY
+#
+# If you enable this, remove the "crons" block from vercel.json so the two
+# schedulers do not both fire. Nothing breaks if you leave it — the delivery
+# ledger deduplicates — but the logs get confusing.
+
+name: nudges
+
+on:
+  schedule:
+    # Times are UTC. LOCAL_TZ in src/context.py is IST (UTC+5:30).
+    - cron: "40 2 * * *"   # 08:10 IST — morning brief
+    - cron: "10 14 * * *"  # 19:40 IST — evening checks
+  workflow_dispatch:        # lets you fire one by hand from the Actions tab
+
+jobs:
+  nudge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate and deliver nudges
+        env:
+          BASE_URL: ${{ secrets.PAI_BASE_URL }}
+          API_KEY: ${{ secrets.PAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          response=$(curl --silent --show-error --fail-with-body \
+            --max-time 60 \
+            --request POST "$BASE_URL/cron/nudges" \
+            --header "Authorization: Bearer $API_KEY")
+          echo "$response"
+          # Surface a misconfigured Firebase as a red build rather than a
+          # notification that silently never arrives.
+          if echo "$response" | grep -q '"push_enabled": *false'; then
+            echo "::error::push is disabled on the server — check PAI_FCM_PROJECT_ID and PAI_FCM_CREDENTIALS"
+            exit 1
+          fi

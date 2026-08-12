@@ -132,6 +132,105 @@ class ApiService {
     }
   }
 
+  // ── Push notifications ────────────────────────────────────────────────────
+
+  /// Register this device's FCM token so the server can push nudges to it.
+  Future<void> registerDevice({
+    required String token,
+    required String platform,
+  }) async {
+    final r = await _client
+        .post(
+          Uri.parse('$_baseUrl/devices/register'),
+          headers: _headers,
+          body: jsonEncode({'token': token, 'platform': platform}),
+        )
+        .timeout(const Duration(seconds: 25));
+    if (r.statusCode >= 300) {
+      throw ApiException(_detail(r) ?? 'Could not register for notifications '
+          '(${r.statusCode})', statusCode: r.statusCode);
+    }
+  }
+
+  /// Stop pushing to this device.
+  Future<void> unregisterDevice(String token) async {
+    await _client
+        .delete(
+          Uri.parse('$_baseUrl/devices/${Uri.encodeComponent(token)}'),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 25));
+  }
+
+  /// Everything currently worth surfacing, including the in-app-only nudges
+  /// that are deliberately never pushed.
+  Future<List<({String kind, String message, String priority})>>
+      fetchNudges() async {
+    try {
+      final r = await _client
+          .get(Uri.parse('$_baseUrl/nudges'), headers: _headers)
+          .timeout(const Duration(seconds: 25));
+      if (r.statusCode != 200) return const [];
+      final data = jsonDecode(r.body) as Map<String, dynamic>;
+      final items = (data['nudges'] as List?) ?? const [];
+      return items
+          .whereType<Map<String, dynamic>>()
+          .map((n) => (
+                kind: n['kind'] as String? ?? '',
+                message: n['message'] as String? ?? '',
+                priority: n['priority'] as String? ?? 'low',
+              ))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// The notifications the device should schedule, and when to ask again.
+  ///
+  /// Returns raw maps rather than a notification model so this layer stays
+  /// unaware of how they are presented. `ok` is false when the server could
+  /// not be asked, which the caller must not confuse with an empty plan —
+  /// applying an empty plan cancels notifications the OS is already holding.
+  Future<({bool ok, List<Map<String, dynamic>> slots, int refreshAfterSeconds})>
+      fetchNudgeSchedule() async {
+    const fallbackRefresh = 900;
+    try {
+      final r = await _client
+          .get(Uri.parse('$_baseUrl/nudges/schedule'), headers: _headers)
+          .timeout(const Duration(seconds: 25));
+      if (r.statusCode == 401) {
+        throw const ApiException('Session expired', statusCode: 401);
+      }
+      if (r.statusCode != 200) {
+        return (
+          ok: false,
+          slots: <Map<String, dynamic>>[],
+          refreshAfterSeconds: fallbackRefresh,
+        );
+      }
+
+      final data = jsonDecode(r.body) as Map<String, dynamic>;
+      final slots = ((data['slots'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      return (
+        ok: true,
+        slots: slots,
+        refreshAfterSeconds:
+            data['refresh_after_seconds'] as int? ?? fallbackRefresh,
+      );
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      return (
+        ok: false,
+        slots: <Map<String, dynamic>>[],
+        refreshAfterSeconds: fallbackRefresh,
+      );
+    }
+  }
+
   /// Timeouts against a serverless backend usually mean a cold start, not an
   /// unreachable host — say so rather than implying the URL is wrong.
   static String _reachabilityMessage(Object error) {

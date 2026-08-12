@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../../app.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/chat_provider.dart';
+import '../../services/notification_service.dart';
+import '../../services/nudge_scheduler.dart';
 
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({super.key});
@@ -188,11 +190,28 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
               ),
 
+              // Wake word — mobile only; sherpa-onnx ships no desktop binary here.
+              if (context.read<ChatProvider>().wakeWordSupported) ...[
+                const SizedBox(height: 16),
+                const _Label('Wake word'),
+                const SizedBox(height: 6),
+                const _WakeWordToggle(),
+              ],
+
               if (_saveError != null) ...[
                 const SizedBox(height: 10),
                 Text(_saveError!,
                     style:
                         const TextStyle(color: kError, fontSize: 12)),
+              ],
+
+              // Notifications are delivered on-device, so this section is
+              // mobile-only and independent of the dormant FCM path.
+              if (NotificationService.supported) ...[
+                const SizedBox(height: 16),
+                const _Label('Notifications'),
+                const SizedBox(height: 6),
+                const _NudgeSection(),
               ],
 
               const SizedBox(height: 24),
@@ -225,6 +244,105 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Toggle, status and a test trigger for on-device scheduled nudges.
+class _NudgeSection extends StatelessWidget {
+  const _NudgeSection();
+
+  static String _ago(DateTime when) {
+    final gap = DateTime.now().difference(when);
+    if (gap.inMinutes < 1) return 'just now';
+    if (gap.inMinutes < 60) return '${gap.inMinutes}m ago';
+    if (gap.inHours < 24) return '${gap.inHours}h ago';
+    return '${gap.inDays}d ago';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheduler = context.watch<NudgeScheduler>();
+    final error = scheduler.lastError;
+    final lastRefresh = scheduler.lastRefreshAt;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          value: scheduler.enabled,
+          onChanged: (value) => scheduler.setEnabled(value),
+          activeColor: kPrimary,
+          title: const Text(
+            'Scheduled nudges',
+            style: TextStyle(color: kTextPrimary, fontSize: 14),
+          ),
+          subtitle: const Text(
+            'A morning brief and an evening check, kept current while the app runs.',
+            style: TextStyle(color: kTextMuted, fontSize: 11),
+          ),
+        ),
+        if (scheduler.enabled && error == null)
+          Text(
+            lastRefresh == null
+                ? 'Waiting for the first check…'
+                : '${scheduler.scheduledCount} scheduled · checked ${_ago(lastRefresh)}',
+            style: const TextStyle(color: kTextMuted, fontSize: 11),
+          ),
+        if (error != null)
+          Text(error, style: const TextStyle(color: kError, fontSize: 11)),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: scheduler.sendTestNotification,
+            icon: const Icon(Icons.notifications_active_rounded,
+                size: 18, color: kTextMuted),
+            label: const Text('Send a test notification',
+                style: TextStyle(color: kTextMuted, fontSize: 13)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Switch for always-on wake-word listening, with whatever went wrong beneath.
+class _WakeWordToggle extends StatelessWidget {
+  const _WakeWordToggle();
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<ChatProvider>();
+    final error = provider.wakeWordError;
+    final showError = provider.wakeWordEnabled && error != null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          value: provider.wakeWordEnabled,
+          onChanged: (value) => provider.setWakeWordEnabled(value),
+          activeColor: kPrimary,
+          title: Text(
+            'Listen for "${provider.wakeWord}"',
+            style: const TextStyle(color: kTextPrimary, fontSize: 14),
+          ),
+          subtitle: const Text(
+            'Keeps the mic open, including when locked. Costs battery.',
+            style: TextStyle(color: kTextMuted, fontSize: 11),
+          ),
+        ),
+        if (showError)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(error,
+                style: const TextStyle(color: kError, fontSize: 11)),
+          ),
+      ],
     );
   }
 }

@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:record/record.dart';
 
@@ -136,6 +138,94 @@ class SttService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Record one spoken utterance, ending it automatically, then transcribe.
+  ///
+  /// Used by the hands-free path, where there is no second tap to mark the
+  /// end of speech. Returns null when the user never spoke, or when the audio
+  /// could not be transcribed.
+  ///
+  /// The two phases behave differently on purpose. Before speech starts we are
+  /// willing to wait [maxWaitForSpeech] and then give up entirely — that is
+  /// what makes a follow-up window close on its own when the user has nothing
+  /// more to say. Once speech has started, [silenceWindow] of quiet ends the
+  /// utterance and [maxDuration] caps a monologue.
+  ///
+  /// Levels are dBFS, so they are negative and 0.0 is the loudest possible
+  /// sample; -35 sits comfortably between room tone and a speaking voice.
+  ///
+  /// Mobile only — endpointing reads the `record` package's amplitude stream,
+  /// which the Windows FFI recorder does not provide.
+  Future<String?> listenAndTranscribe({
+    Duration maxWaitForSpeech = const Duration(seconds: 3),
+    Duration silenceWindow = const Duration(milliseconds: 1500),
+    Duration maxDuration = const Duration(seconds: 15),
+    double speechThresholdDb = -35.0,
+    VoidCallback? onSpeechStarted,
+  }) async {
+    if (Platform.isWindows) {
+      _unavailableReason = 'Hands-free listening is not available on Windows.';
+      return null;
+    }
+    if (!await startRecording()) return null;
+
+    const tick = Duration(milliseconds: 150);
+    final startedAt = DateTime.now();
+    DateTime? speechStartedAt;
+    DateTime? lastLoudAt;
+    var heardSpeech = false;
+
+    final completer = Completer<bool>();
+    late final StreamSubscription<Amplitude> sub;
+
+    void finish(bool spoke) {
+      if (!completer.isCompleted) completer.complete(spoke);
+    }
+
+    sub = _mobileRecorder.onAmplitudeChanged(tick).listen((amplitude) {
+      final now = DateTime.now();
+      final loud = amplitude.current > speechThresholdDb;
+
+      if (loud) {
+        lastLoudAt = now;
+        if (!heardSpeech) {
+          heardSpeech = true;
+          speechStartedAt = now;
+          onSpeechStarted?.call();
+        }
+      }
+
+      if (!heardSpeech) {
+        // Still waiting for them to begin.
+        if (now.difference(startedAt) >= maxWaitForSpeech) finish(false);
+        return;
+      }
+
+      if (now.difference(speechStartedAt!) >= maxDuration) {
+        finish(true);
+      } else if (lastLoudAt != null &&
+          now.difference(lastLoudAt!) >= silenceWindow) {
+        finish(true);
+      }
+    }, onError: (_) => finish(heardSpeech));
+
+    // Backstop: if amplitude events stop arriving the stream listener above
+    // can never fire again, and without this the turn would hang forever.
+    final guard = Timer(
+      maxWaitForSpeech + maxDuration + const Duration(seconds: 2),
+      () => finish(heardSpeech),
+    );
+
+    final spoke = await completer.future;
+    await sub.cancel();
+    guard.cancel();
+
+    if (!spoke) {
+      cancelRecording();
+      return null;
+    }
+    return stopAndTranscribe();
   }
 
   void cancelRecording() async {

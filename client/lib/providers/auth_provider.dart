@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
 import '../services/api_service.dart';
+import '../services/nudge_scheduler.dart';
+import '../services/push_service.dart';
 
 enum AuthState {
   /// Deciding on startup whether the stored session is still good.
@@ -21,12 +23,24 @@ enum AuthState {
 
 /// Owns the session token so the password is entered once, not every launch.
 class AuthProvider extends ChangeNotifier {
-  AuthProvider({required ApiService api, required SharedPreferences prefs})
-      : _api = api,
-        _prefs = prefs;
+  AuthProvider({
+    required ApiService api,
+    required SharedPreferences prefs,
+    PushService? push,
+    NudgeScheduler? nudges,
+  })  : _api = api,
+        _prefs = prefs,
+        _push = push,
+        _nudges = nudges;
 
   final ApiService _api;
   final SharedPreferences _prefs;
+
+  /// Null on desktop, where push is not available.
+  final PushService? _push;
+
+  /// Drives on-device nudge scheduling, which needs a signed-in credential.
+  final NudgeScheduler? _nudges;
 
   AuthState _state = AuthState.checking;
   String? _error;
@@ -141,6 +155,10 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    // Unregister before dropping the token — the request needs it to
+    // authenticate, and otherwise this phone keeps receiving nudges.
+    await _push?.unregister();
+    await _nudges?.setSignedIn(false);
     await AppConfig.clearToken(_prefs);
     _error = null;
     _set(AuthState.signedOut);
@@ -155,7 +173,19 @@ class AuthProvider extends ChangeNotifier {
   }
 
   void _set(AuthState next) {
+    final becameSignedIn = next == AuthState.signedIn && _state != next;
     _state = next;
     notifyListeners();
+    // Registration needs a valid credential, so it can only happen once the
+    // session is established. Fire-and-forget: a device that cannot register
+    // still has a fully working app, and the next launch tries again.
+    if (becameSignedIn) unawaited(_registerForPush());
+    unawaited(_nudges?.setSignedIn(next == AuthState.signedIn));
+  }
+
+  Future<void> _registerForPush() async {
+    final push = _push;
+    if (push == null) return;
+    await push.registerWithBackend();
   }
 }

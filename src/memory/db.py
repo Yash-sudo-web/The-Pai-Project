@@ -290,6 +290,49 @@ class CommandReceipt(Base):
     )
 
 
+class DeviceToken(Base):
+    """An FCM registration token for one install of the client app.
+
+    Tokens are rotated by FCM without warning, so the token itself is the
+    primary key rather than the device: a rotated token arrives as a fresh
+    row and the stale one is dropped when FCM reports it UNREGISTERED.
+    """
+
+    __tablename__ = "device_tokens"
+
+    token = Column(Text, primary_key=True)
+    user_id = Column(Text, nullable=False)
+    platform = Column(Text, nullable=False)  # ios | android
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        CheckConstraint("platform IN ('ios', 'android')", name="ck_device_platform"),
+        Index("ix_device_tokens_user", "user_id"),
+    )
+
+
+class NudgeDelivery(Base):
+    """One row per nudge kind actually pushed to a device.
+
+    The nudge rules are stateless — they report what is true right now, which
+    for something like a workout gap stays true for days. This ledger is what
+    stops the same nudge going out on every cron tick; see
+    ``src.domains.review.nudges.DEDUP_WINDOW_HOURS``.
+    """
+
+    __tablename__ = "nudge_deliveries"
+
+    id = Column(Text, primary_key=True)
+    user_id = Column(Text, nullable=False)
+    kind = Column(Text, nullable=False)
+    sent_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        Index("ix_nudge_deliveries_user_kind_sent", "user_id", "kind", sent_at.desc()),
+    )
+
+
 def init_db() -> None:
     """Create tables and indexes for a database Alembic does not manage.
 
