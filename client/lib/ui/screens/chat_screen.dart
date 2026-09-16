@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 
@@ -39,8 +40,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = provider.transcribedText;
     if (text != null) {
       _inputController.text = text;
-      _inputController.selection =
-          TextSelection.collapsed(offset: text.length);
+      _inputController.selection = TextSelection.collapsed(offset: text.length);
       provider.consumeTranscribedText();
       _focusNode.requestFocus();
     }
@@ -117,13 +117,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Scaffold(
       backgroundColor: kBg,
-      drawer: isDesktop ? null : Drawer(child: _LeftSidebar(onSettingsTap: _openSettings)),
+      drawer: isDesktop
+          ? null
+          : Drawer(child: _LeftSidebar(onSettingsTap: _openSettings)),
       appBar: isDesktop
           ? null
           : AppBar(
               backgroundColor: kSurface,
               iconTheme: const IconThemeData(color: kTextPrimary),
-              title: Text(_greeting(), style: const TextStyle(color: kTextPrimary, fontSize: 16)),
+              title: Text(_greeting(),
+                  style: const TextStyle(color: kTextPrimary, fontSize: 16)),
               elevation: 0,
             ),
       body: isDesktop
@@ -172,6 +175,31 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: const _MicButton(),
                     ),
                   ),
+                  if (defaultTargetPlatform == TargetPlatform.iOS)
+                    Positioned(
+                      bottom: 178,
+                      right: 16,
+                      child: Consumer<ChatProvider>(
+                        builder: (context, provider, _) => FilledButton.icon(
+                          onPressed:
+                              provider.isThinking && !provider.isHandsFreeTurn
+                                  ? null
+                                  : () {
+                                      if (provider.isHandsFreeTurn) {
+                                        provider.stopHandsFreeTurn();
+                                      } else {
+                                        provider.startHandsFreeTurn();
+                                      }
+                                    },
+                          icon: Icon(provider.isHandsFreeTurn
+                              ? Icons.stop_rounded
+                              : Icons.record_voice_over_rounded),
+                          label: Text(provider.isHandsFreeTurn
+                              ? 'Stop Pai'
+                              : 'Ask Pai'),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -210,7 +238,8 @@ class _LeftSidebar extends StatelessWidget {
                       colors: [kAccent, kPrimary],
                     ),
                   ),
-                  child: const Icon(Icons.auto_awesome, color: Colors.white, size: 16),
+                  child: const Icon(Icons.auto_awesome,
+                      color: Colors.white, size: 16),
                 ),
                 const SizedBox(width: 10),
                 const Expanded(
@@ -265,9 +294,11 @@ class _LeftSidebar extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                const Icon(Icons.volume_up_rounded, color: kTextMuted, size: 16),
+                const Icon(Icons.volume_up_rounded,
+                    color: kTextMuted, size: 16),
                 const SizedBox(width: 8),
-                const Text('TTS', style: TextStyle(color: kTextMuted, fontSize: 12)),
+                const Text('TTS',
+                    style: TextStyle(color: kTextMuted, fontSize: 12)),
                 const Spacer(),
                 Switch(
                   value: provider.ttsEnabled,
@@ -345,8 +376,7 @@ class _NavItem extends StatelessWidget {
             child: Row(
               children: [
                 Icon(icon,
-                    size: 18,
-                    color: selected ? kAccent : kTextSecondary),
+                    size: 18, color: selected ? kAccent : kTextSecondary),
                 const SizedBox(width: 10),
                 Text(
                   label,
@@ -443,7 +473,9 @@ class _MicButtonState extends State<_MicButton>
     }
 
     return GestureDetector(
-      onTap: provider.isThinking ? null : () => provider.toggleRecording(),
+      onTap: provider.isThinking && !provider.isHandsFreeTurn
+          ? null
+          : () => provider.toggleRecording(),
       child: AnimatedBuilder(
         animation: _pulseController,
         builder: (context, child) {
@@ -476,8 +508,7 @@ class _MicButtonState extends State<_MicButton>
                             : kPrimary)
                         .withOpacity(glowOpacity),
                     blurRadius: voiceState == VoiceState.recording ? 40 : 20,
-                    spreadRadius:
-                        voiceState == VoiceState.recording ? 8 : 2,
+                    spreadRadius: voiceState == VoiceState.recording ? 8 : 2,
                   ),
                 ],
               ),
@@ -492,7 +523,8 @@ class _MicButtonState extends State<_MicButton>
                         ),
                       )
                     : Icon(
-                        voiceState == VoiceState.recording
+                        provider.isHandsFreeTurn ||
+                                voiceState == VoiceState.recording
                             ? Icons.stop_rounded
                             : Icons.mic_rounded,
                         color: voiceState == VoiceState.recording
@@ -726,7 +758,8 @@ class _JumpToLatest extends StatelessWidget {
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.arrow_downward_rounded, size: 14, color: kPrimaryLight),
+              Icon(Icons.arrow_downward_rounded,
+                  size: 14, color: kPrimaryLight),
               SizedBox(width: 6),
               Text('Latest',
                   style: TextStyle(color: kTextSecondary, fontSize: 12)),
@@ -849,8 +882,7 @@ class _ConfirmationBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: kSurfaceVar,
         borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: const Color(0xFFF59E0B).withOpacity(0.5)),
+        border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.5)),
       ),
       child: Row(
         children: [
@@ -873,8 +905,7 @@ class _ConfirmationBar extends StatelessWidget {
             style: ElevatedButton.styleFrom(
               backgroundColor: kPrimary,
               foregroundColor: Colors.white,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(6)),
             ),
@@ -987,9 +1018,7 @@ class _ChatInput extends StatelessWidget {
                                   colors: [kPrimary, Color(0xFF5B21B6)])
                               : null,
                           color: canSend ? null : kSurfaceVar,
-                          border: canSend
-                              ? null
-                              : Border.all(color: kBorder),
+                          border: canSend ? null : Border.all(color: kBorder),
                         ),
                         child: busy
                             ? const Padding(

@@ -52,8 +52,7 @@ Future<void> main() async {
     nudges: nudgeScheduler,
   );
   // Null on desktop — Porcupine has no Windows implementation.
-  final wakeWordService =
-      WakeWordService.supported ? WakeWordService() : null;
+  final wakeWordService = WakeWordService.supported ? WakeWordService() : null;
 
   final chatProvider = ChatProvider(
     apiService: apiService,
@@ -64,9 +63,8 @@ Future<void> main() async {
     onUnauthorized: authProvider.onUnauthorized,
   );
 
-  // Back Tap / Shortcuts route: iOS cannot bind a gesture to an app action
-  // directly, so a Shortcut opens `pai://listen` and that starts a turn. Costs
-  // no battery and works when wake-word detection is off or has died.
+  // Back Tap / Shortcuts route: a Shortcut opens `pai://listen` to start one
+  // turn. With wake-word detection off, the microphone stays closed while idle.
   unawaited(_listenForShortcutLaunch(chatProvider));
 
   runApp(
@@ -81,20 +79,20 @@ Future<void> main() async {
   );
 }
 
-/// Route incoming `pai://listen` links to a hands-free turn.
+/// Route voice links opened by Shortcuts or the Live Activity.
 Future<void> _listenForShortcutLaunch(ChatProvider chat) async {
-  bool isListenLink(Uri uri) => uri.scheme == 'pai' && uri.host == 'listen';
+  void handleLink(Uri uri) {
+    if (uri.scheme != 'pai') return;
+    if (uri.host == 'listen') unawaited(chat.startHandsFreeTurn());
+    if (uri.host == 'stop') unawaited(chat.stopHandsFreeTurn());
+  }
 
   try {
     final links = AppLinks();
     // A cold start arrives here rather than on the stream.
     final initial = await links.getInitialLink();
-    if (initial != null && isListenLink(initial)) {
-      unawaited(chat.startHandsFreeTurn());
-    }
-    links.uriLinkStream.listen((uri) {
-      if (isListenLink(uri)) unawaited(chat.startHandsFreeTurn());
-    });
+    if (initial != null) handleLink(initial);
+    links.uriLinkStream.listen(handleLink);
   } catch (e) {
     debugPrint('main: deep-link listener unavailable ($e)');
   }

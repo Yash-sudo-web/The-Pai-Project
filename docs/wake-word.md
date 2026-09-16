@@ -62,22 +62,46 @@ Per-phrase overrides go in `keywords.txt` as `:score` and `#threshold` suffixes.
 These defaults are the model's, not measurements from your voice — expect to
 move them.
 
-## The Back Tap fallback
+## On-demand iPhone launch (recommended for battery life)
 
-iOS cannot bind a gesture directly to an app action, so the app registers the
-`pai://` URL scheme and opening **`pai://listen`** starts a turn — the same
-loop, minus the phrase.
+iOS Shortcuts can open the app's `pai://listen` URL. That starts one hands-free
+turn without leaving the wake-word detector active between requests. Turn off
+**Settings → Wake word → Listen for "Hey Pai"** to release the microphone when
+idle. With this setting off, the app listens for one request and ends after its
+reply; the five-second follow-up window is only used when wake-word listening
+is enabled.
+
+The iPhone chat screen also has an **Ask Pai** button for the same spoken turn.
+The round mic button still records a draft transcript for editing before send.
 
 To wire it up:
 
 1. **Shortcuts** app → new shortcut → **Open URL** → `pai://listen`. Name it
    something like "Ask Pai".
-2. **Settings → Accessibility → Touch → Back Tap → Double Tap** → pick that
-   shortcut. On a Pro, the **Action Button** works too.
+2. **Settings → Accessibility → Touch → Back Tap → Double Tap** (or Triple Tap)
+   → pick that shortcut.
 
-Double-tap the back of the phone and it starts listening. Costs no battery,
-never false-triggers, and works when wake-word detection is switched off or has
-quietly died — which is exactly why it exists.
+Other ways to run the same shortcut on an iPhone 14 Pro Max:
+
+| Trigger | Setup | Tradeoff |
+| --- | --- | --- |
+| Lock Screen control (iOS 18.2+) | Customize the Lock Screen and look for a Shortcut control; select **Ask Pai** if offered | Visible, one touch; availability of this URL-based shortcut needs checking on-device, and opening the app may require unlock |
+| Control Center (iOS 18+) | Add a **Shortcut** control and choose **Ask Pai** | Available from many screens; takes a swipe and tap |
+| Side button + Siri | Press and hold the Side button, then say **Ask Pai** | Physical button, but Siri must recognize the shortcut name; opening the app from a locked phone may require unlock |
+| Voice Control custom command | Settings → Accessibility → Voice Control → Customize Commands → Create New Command → Run Shortcut | Needs Voice Control listening, so it does not solve the always-listening concern |
+| Vocal Shortcuts | Settings → Accessibility → Vocal Shortcuts | Also uses the microphone continuously to detect the phrase |
+
+The iPhone 14 Pro Max has a Ring/Silent switch, **not an Action button**; the
+Side button cannot be directly assigned to an arbitrary Shortcut. Back Tap is
+the simplest low-idle-power trigger on this model. A trigger can fail or fire
+accidentally, so test it on the physical phone, both unlocked and locked.
+
+Apple references: [Back Tap](https://support.apple.com/guide/shortcuts/apd897693606/ios),
+[Control Center Shortcuts](https://support.apple.com/guide/shortcuts/apd06a9201d4/ios),
+[Lock Screen App Shortcuts](https://support.apple.com/121131),
+[Siri Shortcuts](https://support.apple.com/guide/shortcuts/apd07c25bb38/ios),
+[Vocal Shortcuts](https://support.apple.com/guide/iphone/iph7f242ea2c/ios),
+[iPhone 14 Pro Max hardware](https://support.apple.com/guide/iphone/iphed34f9f10/ios).
 
 ## Setup
 
@@ -93,7 +117,7 @@ Nothing else — no accounts, no keys, no model download.
 **Only one thing can hold the microphone.** The detector streams from it
 continuously and `SttService` needs it to record your question, so every
 transition stops one before starting the other. That is why `toggleRecording`
-also stops the detector, and why a mic-button tap is ignored mid-turn.
+also stops the detector; during a hands-free turn, the mic button stops it.
 
 **It must not hear itself.** Detection is off while the assistant speaks, and
 the reply is played with `speakAndWait` so the microphone reopens only once
@@ -124,7 +148,7 @@ into the input box to edit. Only the wake path and `pai://listen` auto-submit.
 | Termination without restart | iOS may kill the app under memory pressure; nothing brings it back. |
 | Reboots | Nothing runs until you open the app manually. |
 | 7-day sideload expiry | The app stops launching until re-signed. |
-| App Store | `audio` background mode used for listening rather than playback is a rejection reason. Fine while sideloading. |
+| App Store | Background audio supports a user-started recording or playback session, but using it solely to keep a passive wake-word detector alive has App Review risk. |
 
 Every row below the first is a reason the Back Tap route is worth wiring up.
 

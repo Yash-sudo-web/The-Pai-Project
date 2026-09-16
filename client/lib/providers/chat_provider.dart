@@ -7,13 +7,14 @@ import '../config.dart';
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
 import '../services/message_cache.dart';
+import '../services/locked_voice_session.dart';
 import '../services/stt_service.dart';
 import '../services/tts_service.dart';
 import '../services/wake_word_service.dart';
 
 /// Where the voice pipeline currently is.
 ///
-/// [wakeListening] is the hands-free resting state: Porcupine holds the
+/// [wakeListening] is the hands-free resting state: the keyword detector holds the
 /// microphone waiting for the keyword. Everything from [recording] onwards is
 /// reached by either the wake word or the mic button, and the two paths differ
 /// only in what happens to the transcript — see [_handsFree].
@@ -47,7 +48,7 @@ class ChatProvider extends ChangeNotifier {
   final SttService _stt;
   final TtsService _tts;
 
-  /// Null on desktop, where Porcupine has no implementation.
+  /// Null on desktop, where the keyword detector has no implementation.
   final WakeWordService? _wake;
   final SharedPreferences _prefs;
 
@@ -76,6 +77,7 @@ class ChatProvider extends ChangeNotifier {
   /// microphone, while the mic button drops the transcript into the input box
   /// and lets [sendCommand] speak in the ordinary fire-and-forget way.
   bool _handsFree = false;
+  bool _stopHandsFreeRequested = false;
 
   /// The assistant's last reply text, captured during a hands-free turn so the
   /// loop can speak it and wait.
@@ -101,6 +103,7 @@ class ChatProvider extends ChangeNotifier {
   bool get isTranscribing => _voiceState == VoiceState.transcribing;
   bool get isWakeListening => _voiceState == VoiceState.wakeListening;
   bool get isSpeaking => _voiceState == VoiceState.speaking;
+  bool get isHandsFreeTurn => _handsFree;
   String? get transcribedText => _transcribedText;
   bool get ttsEnabled => _ttsEnabled;
   bool get wakeWordSupported => WakeWordService.supported;
@@ -111,6 +114,7 @@ class ChatProvider extends ChangeNotifier {
   /// Due nudges the user has not dismissed, most urgent first.
   List<({String kind, String message, String priority})> get visibleNudges =>
       _nudges.where((n) => !_dismissedNudges.contains(n.kind)).toList();
+
   /// Read live: the credential can change after sign-in, so a snapshot taken
   /// at construction would be stale.
   bool get isConfigured => AppConfig.isConfigured(_prefs);
@@ -148,7 +152,8 @@ class ChatProvider extends ChangeNotifier {
       await _resumeWakeListening();
     } else {
       await wake.stop();
-      if (_voiceState == VoiceState.wakeListening) _setVoiceState(VoiceState.idle);
+      if (_voiceState == VoiceState.wakeListening)
+        _setVoiceState(VoiceState.idle);
     }
   }
 
@@ -343,10 +348,12 @@ class ChatProvider extends ChangeNotifier {
 
   /// Toggle recording: start if idle, stop+transcribe if recording.
   ///
-  /// Ignored mid-turn: the hands-free loop drives the microphone itself, and a
-  /// tap landing in the middle would leave both fighting over it.
+  /// During a hands-free turn the same button cancels the turn.
   Future<void> toggleRecording() async {
-    if (_handsFree) return;
+    if (_handsFree) {
+      await stopHandsFreeTurn();
+      return;
+    }
 
     if (_voiceState == VoiceState.recording) {
       await _stopAndTranscribe();
@@ -397,11 +404,28 @@ class ChatProvider extends ChangeNotifier {
   /// different trigger. Ignored if a turn is already running.
   Future<void> startHandsFreeTurn() async {
     if (_handsFree) return;
+    if (_voiceState == VoiceState.recording) {
+      await _stt.cancelRecording();
+      _setVoiceState(VoiceState.idle);
+    }
     await _runHandsFreeTurn();
   }
 
+  /// Stop the user-started turn promptly when it is listening or speaking.
+  /// An in-flight server response may still finish, but will not be spoken.
+  Future<void> stopHandsFreeTurn() async {
+    if (!_handsFree || _stopHandsFreeRequested) return;
+    _stopHandsFreeRequested = true;
+    if (_voiceState == VoiceState.recording) {
+      await _stt.cancelRecording();
+    }
+    await _tts.stop();
+    await LockedVoiceSession.end();
+    _setVoiceState(VoiceState.idle);
+  }
+
   void _onWakeWordDetected() {
-    // Porcupine calls this from its audio callback; never re-enter a turn that
+    // The detector calls this from its audio callback; never re-enter a turn that
     // is already running.
     if (_handsFree) return;
     unawaited(_runHandsFreeTurn());
@@ -411,26 +435,41 @@ class ChatProvider extends ChangeNotifier {
   /// follow-up, and hand the microphone back to the detector at the end.
   Future<void> _runHandsFreeTurn() async {
     _handsFree = true;
-    // Porcupine and the recorder cannot hold the microphone at the same time.
-    await _wake?.stop();
-
+    _stopHandsFreeRequested = false;
     try {
+      // The detector and recorder cannot hold the microphone at the same time.
+      await _wake?.stop();
+      if (_stopHandsFreeRequested) return;
+      await LockedVoiceSession.begin();
+      if (_stopHandsFreeRequested) return;
       var window = _promptWindow;
 
-      while (true) {
+      while (!_stopHandsFreeRequested) {
         _setVoiceState(VoiceState.recording);
+        await LockedVoiceSession.phase('listening');
+        if (_stopHandsFreeRequested) break;
         final question = await _stt.listenAndTranscribe(
           maxWaitForSpeech: window,
           onSpeechStarted: () => _setVoiceState(VoiceState.recording),
+          onBeforeRecordingStops: () async {
+            await LockedVoiceSession.beginProcessing();
+            _setVoiceState(VoiceState.transcribing);
+            await LockedVoiceSession.phase('transcribing');
+          },
         );
+
+        if (_stopHandsFreeRequested) break;
 
         // Silence: on the first pass they triggered it by accident, on a later
         // pass the conversation is simply over.
         if (question == null || question.trim().isEmpty) break;
 
         _setVoiceState(VoiceState.transcribing);
+        await LockedVoiceSession.phase('thinking');
         _lastReply = null;
         await sendCommand(question);
+
+        if (_stopHandsFreeRequested) break;
 
         final reply = _lastReply;
         // No reply means the request failed or errored. Opening a follow-up
@@ -440,10 +479,15 @@ class ChatProvider extends ChangeNotifier {
 
         if (_ttsEnabled) {
           _setVoiceState(VoiceState.speaking);
+          await LockedVoiceSession.phase('speaking');
           // Awaited, unlike the typed path: reopening the microphone before
           // playback ends would record the assistant talking to itself.
           await _tts.speakAndWait(reply);
         }
+
+        if (_stopHandsFreeRequested) break;
+
+        await LockedVoiceSession.endProcessing();
 
         if (!_wakeEnabled) break; // turned off mid-conversation
         window = _followUpWindow;
@@ -451,8 +495,12 @@ class ChatProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('ChatProvider: hands-free turn failed ($e)');
     } finally {
-      _handsFree = false;
       _lastReply = null;
+      _setVoiceState(VoiceState.idle);
+      await LockedVoiceSession.end();
+      _handsFree = false;
+      _stopHandsFreeRequested = false;
+      notifyListeners();
       await _resumeWakeListening();
     }
   }
@@ -479,7 +527,7 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void cancelRecording() {
-    _stt.cancelRecording();
+    unawaited(_stt.cancelRecording());
     _voiceState = VoiceState.idle;
     notifyListeners();
     unawaited(_resumeWakeListening());

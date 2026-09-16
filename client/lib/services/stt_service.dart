@@ -21,10 +21,14 @@ class SttService {
   final AudioRecorder _mobileRecorder = AudioRecorder();
   String? _mobilePath;
   bool _isMobileRecording = false;
+  Completer<bool>? _activeListen;
+  Future<void>? _cancelFuture;
+  int _listenGeneration = 0;
 
   String? _unavailableReason;
 
-  bool get isListening => Platform.isWindows ? _winRecorder.isRecording : _isMobileRecording;
+  bool get isListening =>
+      Platform.isWindows ? _winRecorder.isRecording : _isMobileRecording;
   String? get unavailableReason => _unavailableReason;
 
   void configure({required String groqApiKey, String? baseUrl}) {
@@ -42,7 +46,7 @@ class SttService {
       _unavailableReason = 'Voice recording requires Windows, iOS, or Android.';
       return false;
     }
-    
+
     // Request permission on mobile
     if (Platform.isIOS || Platform.isAndroid) {
       if (!await _mobileRecorder.hasPermission()) {
@@ -56,7 +60,7 @@ class SttService {
   /// Start recording from the microphone.
   Future<bool> startRecording() async {
     if (_apiKey.isEmpty) return false;
-    
+
     if (Platform.isWindows) {
       final ok = _winRecorder.start();
       if (!ok) _unavailableReason = 'Failed to open microphone on Windows.';
@@ -64,7 +68,8 @@ class SttService {
     } else {
       try {
         final tempDir = Directory.systemTemp;
-        _mobilePath = '${tempDir.path}/pai_mobile_${DateTime.now().millisecondsSinceEpoch}.wav';
+        _mobilePath =
+            '${tempDir.path}/pai_mobile_${DateTime.now().millisecondsSinceEpoch}.wav';
         await _mobileRecorder.start(
           const RecordConfig(encoder: AudioEncoder.wav),
           path: _mobilePath!,
@@ -82,7 +87,7 @@ class SttService {
   /// Returns the transcribed text, or null on failure.
   Future<String?> stopAndTranscribe() async {
     String? path;
-    
+
     if (Platform.isWindows) {
       path = _winRecorder.stop();
     } else {
@@ -98,7 +103,9 @@ class SttService {
     final size = await file.length();
     if (size < 1000) {
       // Too small — silence or error
-      try { await file.delete(); } catch (_) {}
+      try {
+        await file.delete();
+      } catch (_) {}
       return null;
     }
 
@@ -106,7 +113,9 @@ class SttService {
       final text = await _transcribeWithGroq(file);
       return text;
     } finally {
-      try { await file.delete(); } catch (_) {}
+      try {
+        await file.delete();
+      } catch (_) {}
     }
   }
 
@@ -163,12 +172,18 @@ class SttService {
     Duration maxDuration = const Duration(seconds: 15),
     double speechThresholdDb = -35.0,
     VoidCallback? onSpeechStarted,
+    Future<void> Function()? onBeforeRecordingStops,
   }) async {
+    final generation = _listenGeneration;
     if (Platform.isWindows) {
       _unavailableReason = 'Hands-free listening is not available on Windows.';
       return null;
     }
     if (!await startRecording()) return null;
+    if (generation != _listenGeneration) {
+      await cancelRecording();
+      return null;
+    }
 
     const tick = Duration(milliseconds: 150);
     final startedAt = DateTime.now();
@@ -177,6 +192,7 @@ class SttService {
     var heardSpeech = false;
 
     final completer = Completer<bool>();
+    _activeListen = completer;
     late final StreamSubscription<Amplitude> sub;
 
     void finish(bool spoke) {
@@ -218,24 +234,45 @@ class SttService {
     );
 
     final spoke = await completer.future;
+    _activeListen = null;
     await sub.cancel();
     guard.cancel();
 
     if (!spoke) {
-      cancelRecording();
+      if (generation == _listenGeneration) await cancelRecording();
       return null;
     }
+    if (generation != _listenGeneration) return null;
+    if (onBeforeRecordingStops != null) await onBeforeRecordingStops();
+    if (generation != _listenGeneration) return null;
     return stopAndTranscribe();
   }
 
-  void cancelRecording() async {
+  Future<void> cancelRecording() {
+    _listenGeneration++;
+    final current = _cancelFuture;
+    if (current != null) return current;
+    final future = _cancelRecordingInternal();
+    _cancelFuture = future;
+    return future.whenComplete(() {
+      _cancelFuture = null;
+    });
+  }
+
+  Future<void> _cancelRecordingInternal() async {
+    final activeListen = _activeListen;
+    if (activeListen != null && !activeListen.isCompleted) {
+      activeListen.complete(false);
+    }
     if (Platform.isWindows) {
       _winRecorder.cancel();
     } else {
       await _mobileRecorder.stop();
       _isMobileRecording = false;
       if (_mobilePath != null) {
-        try { await File(_mobilePath!).delete(); } catch (_) {}
+        try {
+          await File(_mobilePath!).delete();
+        } catch (_) {}
       }
     }
   }

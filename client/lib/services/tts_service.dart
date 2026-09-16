@@ -19,8 +19,24 @@ class TtsService {
 
   /// The temp WAV currently playing, deleted once playback ends.
   File? _currentFile;
+  Completer<void>? _activeWait;
+  int _playbackGeneration = 0;
 
   Future<void> init() async {
+    if (Platform.isIOS) {
+      // Keep the same input/output category as the native locked-turn session.
+      // audioplayers defaults to .playback, which would replace the recording
+      // session's category when a spoken reply starts.
+      await _player.setAudioContext(AudioContext(
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.playAndRecord,
+          options: const {
+            AVAudioSessionOptions.defaultToSpeaker,
+            AVAudioSessionOptions.allowBluetooth,
+          },
+        ),
+      ));
+    }
     _ready = true;
   }
 
@@ -62,10 +78,12 @@ class TtsService {
 
     try {
       if (!await _startPlayback(text)) return;
+      _activeWait = done;
       await done.future.timeout(const Duration(minutes: 2));
     } catch (_) {
       // Timed out or errored — fall through and let the caller carry on.
     } finally {
+      if (identical(_activeWait, done)) _activeWait = null;
       await sub.cancel();
       _cleanup();
     }
@@ -75,33 +93,41 @@ class TtsService {
   Future<bool> _startPlayback(String text) async {
     if (!_ready || _apiKey.isEmpty || text.trim().isEmpty) return false;
     await stop();
+    final generation = _playbackGeneration;
 
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/audio/speech'),
-        headers: {
-          'Authorization': 'Bearer $_apiKey',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'model': _model,
-          'voice': _voice,
-          'input': text,
-          'response_format': 'wav',
-        }),
-      ).timeout(const Duration(seconds: 30));
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/audio/speech'),
+            headers: {
+              'Authorization': 'Bearer $_apiKey',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'model': _model,
+              'voice': _voice,
+              'input': text,
+              'response_format': 'wav',
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode != 200) return false;
+      if (generation != _playbackGeneration) return false;
 
       // Write to temp file and play via audioplayers
       final tempDir = Directory.systemTemp;
       final wavFile = File(
           '${tempDir.path}/pai_tts_${DateTime.now().millisecondsSinceEpoch}.wav');
       await wavFile.writeAsBytes(response.bodyBytes);
+      if (generation != _playbackGeneration) {
+        await wavFile.delete();
+        return false;
+      }
       _currentFile = wavFile;
 
       await _player.play(DeviceFileSource(wavFile.path));
-      return true;
+      return generation == _playbackGeneration;
     } catch (_) {
       // Silently fail — TTS is non-critical
       return false;
@@ -118,6 +144,9 @@ class TtsService {
   }
 
   Future<void> stop() async {
+    _playbackGeneration++;
+    final wait = _activeWait;
+    if (wait != null && !wait.isCompleted) wait.complete();
     try {
       await _player.stop();
     } catch (_) {}
