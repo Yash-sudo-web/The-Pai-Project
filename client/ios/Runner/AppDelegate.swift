@@ -58,11 +58,18 @@ import UserNotifications
       }
       if #available(iOS 16.1, *) {
         Task { @MainActor in
-          await PaiVoiceActivityManager.shared.begin()
-          result(nil)
+          let widgetURL = Bundle.main.builtInPlugInsURL?
+            .appendingPathComponent("PaiVoiceWidgets.appex")
+          guard let widgetURL,
+                FileManager.default.fileExists(atPath: widgetURL.path) else {
+            result("Pai Voice widget extension is missing from the installed app.")
+            return
+          }
+          let status = await PaiVoiceActivityManager.shared.begin()
+          result(status)
         }
       } else {
-        result(nil)
+        result("Live Activities require iOS 16.1 or later.")
       }
 
     case "beginProcessing":
@@ -100,9 +107,10 @@ import UserNotifications
 
     case "end":
       endProcessingTask()
+      let showCompletion = call.arguments as? Bool ?? false
       if #available(iOS 16.1, *) {
         Task { @MainActor in
-          await PaiVoiceActivityManager.shared.end()
+          await PaiVoiceActivityManager.shared.end(showCompletion: showCompletion)
           self.deactivateVoiceSession()
           result(nil)
         }

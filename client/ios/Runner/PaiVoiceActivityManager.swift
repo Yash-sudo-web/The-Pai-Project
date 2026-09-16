@@ -12,11 +12,15 @@ final class PaiVoiceActivityManager {
 
   private init() {}
 
-  func begin() async {
+  /// Return a short status for the Flutter UI. A failed Live Activity should
+  /// never be silent while the audio turn itself continues to work.
+  func begin() async -> String {
     // A previous turn may have been interrupted before cleanup completed.
     await end()
     turnActive = true
-    guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+    guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+      return "Live Activities are disabled in iPhone Settings."
+    }
     do {
       let attributes = PaiVoiceAttributes(startedAt: Date())
       let state = PaiVoiceAttributes.ContentState(phase: "listening")
@@ -36,14 +40,17 @@ final class PaiVoiceActivityManager {
           pushType: nil
         )
       }
+      NSLog("Pai Live Activity started: %@", activity?.id ?? "unknown")
+      return "Live Activity started"
     } catch {
       NSLog("Pai Live Activity could not start: %@", String(describing: error))
+      return "Live Activity could not start: \(error.localizedDescription)"
     }
   }
 
   func update(_ phase: String) async {
     if turnActive && activity == nil && UIApplication.shared.applicationState == .active {
-      await begin()
+      _ = await begin()
     }
     guard let activity else { return }
     let state = PaiVoiceAttributes.ContentState(phase: phase)
@@ -58,15 +65,20 @@ final class PaiVoiceActivityManager {
     }
   }
 
-  func end() async {
+  func end(showCompletion: Bool = false) async {
     turnActive = false
     self.activity = nil
+    let dismissalPolicy: ActivityUIDismissalPolicy = showCompletion
+      ? .after(Date().addingTimeInterval(15))
+      : .immediate
+    let finalState = PaiVoiceAttributes.ContentState(phase: "done")
     // Also clear an activity left by a previous process after a crash.
     for existing in Activity<PaiVoiceAttributes>.activities {
       if #available(iOS 16.2, *) {
-        await existing.end(nil, dismissalPolicy: .immediate)
+        let content = ActivityContent(state: finalState, staleDate: nil)
+        await existing.end(content, dismissalPolicy: dismissalPolicy)
       } else {
-        await existing.end(using: nil, dismissalPolicy: .immediate)
+        await existing.end(using: finalState, dismissalPolicy: dismissalPolicy)
       }
     }
   }

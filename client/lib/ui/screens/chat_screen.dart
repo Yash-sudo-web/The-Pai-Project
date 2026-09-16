@@ -180,23 +180,48 @@ class _ChatScreenState extends State<ChatScreen> {
                       bottom: 178,
                       right: 16,
                       child: Consumer<ChatProvider>(
-                        builder: (context, provider, _) => FilledButton.icon(
-                          onPressed:
-                              provider.isThinking && !provider.isHandsFreeTurn
-                                  ? null
-                                  : () {
-                                      if (provider.isHandsFreeTurn) {
-                                        provider.stopHandsFreeTurn();
-                                      } else {
-                                        provider.startHandsFreeTurn();
-                                      }
-                                    },
-                          icon: Icon(provider.isHandsFreeTurn
-                              ? Icons.stop_rounded
-                              : Icons.record_voice_over_rounded),
-                          label: Text(provider.isHandsFreeTurn
-                              ? 'Stop Pai'
-                              : 'Ask Pai'),
+                        builder: (context, provider, _) => ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 280),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              if (provider.liveActivityStatus != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: Text(
+                                    provider.liveActivityStatus!,
+                                    style: TextStyle(
+                                      color: provider.liveActivityStatus ==
+                                              'Live Activity started'
+                                          ? kTextSecondary
+                                          : kError,
+                                      fontSize: 11,
+                                    ),
+                                    textAlign: TextAlign.right,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              FilledButton.icon(
+                                onPressed: provider.isThinking &&
+                                        !provider.isHandsFreeTurn
+                                    ? null
+                                    : () {
+                                        if (provider.isHandsFreeTurn) {
+                                          provider.stopHandsFreeTurn();
+                                        } else {
+                                          provider.startHandsFreeTurn();
+                                        }
+                                      },
+                                icon: Icon(provider.isHandsFreeTurn
+                                    ? Icons.stop_rounded
+                                    : Icons.record_voice_over_rounded),
+                                label: Text(provider.isHandsFreeTurn
+                                    ? 'Stop Pai'
+                                    : 'Ask Pai'),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),

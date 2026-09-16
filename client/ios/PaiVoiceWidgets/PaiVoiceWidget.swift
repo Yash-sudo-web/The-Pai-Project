@@ -11,6 +11,7 @@ private extension String {
     case "thinking": return "Thinking"
     case "speaking": return "Speaking"
     case "interrupted": return "Interrupted"
+    case "done": return "Done"
     default: return "Pai"
     }
   }
@@ -22,6 +23,7 @@ private extension String {
     case "thinking": return "ellipsis.bubble.fill"
     case "speaking": return "speaker.wave.2.fill"
     case "interrupted": return "exclamationmark.circle.fill"
+    case "done": return "checkmark.circle.fill"
     default: return "circle.fill"
     }
   }
@@ -42,14 +44,16 @@ struct PaiVoiceWidget: Widget {
             .font(.subheadline)
         }
         Spacer()
-        Link(destination: URL(string: "pai://stop")!) {
-          Text("Stop")
-            .font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.white.opacity(0.16), in: Capsule())
+        if context.state.phase != "done" {
+          Link(destination: URL(string: "pai://stop")!) {
+            Text("Stop")
+              .font(.subheadline.weight(.semibold))
+              .padding(.horizontal, 12)
+              .padding(.vertical, 8)
+              .background(.white.opacity(0.16), in: Capsule())
+          }
+          .accessibilityLabel("Stop Pai voice turn")
         }
-        .accessibilityLabel("Stop Pai voice turn")
       }
       .padding()
       .activityBackgroundTint(Color(red: 0.07, green: 0.07, blue: 0.11))
@@ -65,7 +69,9 @@ struct PaiVoiceWidget: Widget {
             Text(context.state.phase.paiTitle)
               .font(.headline)
             Spacer()
-            Link("Stop", destination: URL(string: "pai://stop")!)
+            if context.state.phase != "done" {
+              Link("Stop", destination: URL(string: "pai://stop")!)
+            }
           }
         }
       } compactLeading: {

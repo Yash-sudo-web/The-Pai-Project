@@ -37,7 +37,7 @@
 | Audio session | The iOS runner sets `playAndRecord`; `audioplayers` uses the same category; the runner observes interruptions | Test speaker, Ring/Silent, AirPods, calls, Siri, and route changes on the device |
 | Recording | `SttService` uses `record` and a 150 ms amplitude stream for endpointing, with cancellation support | Verify amplitude callbacks and stop/transcribe complete after locking |
 | Playback | `TtsService` uses `audioplayers` and can now be stopped mid-reply | Verify locked playback; report synthesis/playback failure rather than showing **Speaking** falsely |
-| UI | **Ask Pai** in the iPhone chat, plus a native ActivityKit widget showing Listening → Transcribing → Thinking → Speaking; Stop links to `pai://stop` | Check Live Activity permission and layout on the actual Lock Screen and Dynamic Island; Stop may require unlock |
+| UI | **Ask Pai** in the iPhone chat reports the Live Activity start result. The ActivityKit widget shows Listening → Transcribing → Thinking → Speaking, then Done briefly on the Lock Screen; Stop links to `pai://stop` | Check Live Activity permission and layout on the actual Lock Screen and Dynamic Island; Stop may require unlock |
 | Follow-up | With wake word disabled, the loop stops after one answer | Decide whether a short, explicitly user-started conversation should allow a bounded follow-up while locked |
 
 ## Next build order
@@ -59,7 +59,9 @@
 - Lock after recording but during network work: the answer still arrives or the
   turn ends with a clear error and no stale Live Activity.
 - The Live Activity shows the correct phase on the Lock Screen, and the Dynamic
-  Island shows it when unlocked. Stop releases the microphone promptly.
+  Island shows it when unlocked. Stop releases the microphone promptly. If no
+  activity appears, read the status beneath **Ask Pai** for the native failure
+  reason or a missing widget extension.
 - Start from Back Tap, Siri, and any Lock Screen control while already locked:
   record whether iOS requires unlock. Do not treat an unlock prompt as a bug in
   Pai.

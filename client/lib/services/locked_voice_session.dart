@@ -19,7 +19,18 @@ class LockedVoiceSession {
     }
   }
 
-  static Future<void> begin() => _call('begin');
+  /// Returns the native Live Activity result, including a failure reason.
+  /// Audio recording can still proceed when the activity is unavailable.
+  static Future<String?> begin() async {
+    if (!Platform.isIOS) return null;
+    try {
+      return await _channel.invokeMethod<String>('begin');
+    } on PlatformException catch (e) {
+      return 'iOS voice session failed: ${e.message ?? e.code}';
+    } on MissingPluginException {
+      return 'iOS voice bridge is missing from this app build.';
+    }
+  }
 
   /// Called before recording stops, so iOS does not suspend the app during the
   /// transcription, assistant request, or speech synthesis network gap.
@@ -29,5 +40,6 @@ class LockedVoiceSession {
 
   static Future<void> phase(String value) => _call('phase', value);
 
-  static Future<void> end() => _call('end');
+  static Future<void> end({bool showCompletion = false}) =>
+      _call('end', showCompletion);
 }

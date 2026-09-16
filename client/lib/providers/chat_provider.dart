@@ -78,6 +78,7 @@ class ChatProvider extends ChangeNotifier {
   /// and lets [sendCommand] speak in the ordinary fire-and-forget way.
   bool _handsFree = false;
   bool _stopHandsFreeRequested = false;
+  String? _liveActivityStatus;
 
   /// The assistant's last reply text, captured during a hands-free turn so the
   /// loop can speak it and wait.
@@ -104,6 +105,7 @@ class ChatProvider extends ChangeNotifier {
   bool get isWakeListening => _voiceState == VoiceState.wakeListening;
   bool get isSpeaking => _voiceState == VoiceState.speaking;
   bool get isHandsFreeTurn => _handsFree;
+  String? get liveActivityStatus => _liveActivityStatus;
   String? get transcribedText => _transcribedText;
   bool get ttsEnabled => _ttsEnabled;
   bool get wakeWordSupported => WakeWordService.supported;
@@ -440,7 +442,8 @@ class ChatProvider extends ChangeNotifier {
       // The detector and recorder cannot hold the microphone at the same time.
       await _wake?.stop();
       if (_stopHandsFreeRequested) return;
-      await LockedVoiceSession.begin();
+      _liveActivityStatus = await LockedVoiceSession.begin();
+      notifyListeners();
       if (_stopHandsFreeRequested) return;
       var window = _promptWindow;
 
@@ -497,7 +500,10 @@ class ChatProvider extends ChangeNotifier {
     } finally {
       _lastReply = null;
       _setVoiceState(VoiceState.idle);
-      await LockedVoiceSession.end();
+      await LockedVoiceSession.end(
+        showCompletion: !_stopHandsFreeRequested &&
+            _liveActivityStatus == 'Live Activity started',
+      );
       _handsFree = false;
       _stopHandsFreeRequested = false;
       notifyListeners();
